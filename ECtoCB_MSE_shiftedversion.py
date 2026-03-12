@@ -673,3 +673,4 @@ if __name__ == "__main__":
     t0 = time.time()
     train()
     print(f"\nTotal training time: {time.time() - t0:.1f}s")
+  
