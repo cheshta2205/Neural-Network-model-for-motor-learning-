@@ -1,7 +1,7 @@
 """
 mc_replay_hc.py
 
-BABAB motor-learning with A2C (actor-critic) MC and 6 lesion conditions.
+BABAB motor-learning with A2C (actor-critic) MC and 6 conditions. (1 lesion)
 
 Conditions
 ----------
