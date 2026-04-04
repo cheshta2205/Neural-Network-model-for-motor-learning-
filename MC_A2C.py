@@ -7,17 +7,14 @@ Uses proper Advantage Actor-Critic (A2C):
     - Critic : value head V(h_mc) — shares MC's GRU hidden state
 
 Loss per episode
-----------------
     L = L_actor + CRITIC_W * L_critic - ENTROPY_W * L_entropy
 
 Advantage
----------
     A_t = G_t - V(s_t)
     G_t = discounted sum of step rewards from t onwards
     V(s_t) = critic prediction of G_t
 
 Diagnostic plots
-----------------
     actor_loss, critic_loss, advantage_std, return, success
     → tells you immediately if A2C is converging
 """
