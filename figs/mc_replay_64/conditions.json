@@ -1,0 +1,50 @@
+{
+  "0": {
+    "name": "MC only",
+    "use_ec": false,
+    "use_cb": false,
+    "use_hc": false,
+    "use_replay": false,
+    "cb_mode": "none"
+  },
+  "1": {
+    "name": "MC + CB",
+    "use_ec": false,
+    "use_cb": true,
+    "use_hc": false,
+    "use_replay": false,
+    "cb_mode": "retrained_noec"
+  },
+  "2": {
+    "name": "MC + EC",
+    "use_ec": true,
+    "use_cb": false,
+    "use_hc": false,
+    "use_replay": false,
+    "cb_mode": "frozen_support"
+  },
+  "3": {
+    "name": "MC + EC + CB",
+    "use_ec": true,
+    "use_cb": true,
+    "use_hc": false,
+    "use_replay": false,
+    "cb_mode": "frozen_with_ec"
+  },
+  "4": {
+    "name": "MC + EC + CB + HC",
+    "use_ec": true,
+    "use_cb": true,
+    "use_hc": true,
+    "use_replay": true,
+    "cb_mode": "frozen_with_ec"
+  },
+  "5": {
+    "name": "MTL lesion",
+    "use_ec": false,
+    "use_cb": true,
+    "use_hc": false,
+    "use_replay": false,
+    "cb_mode": "frozen_zero_ec"
+  }
+}
