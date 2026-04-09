@@ -1,12 +1,60 @@
 [build-system]
-requires = ["setuptools >= 77.0.3"]
+requires = ["setuptools>=77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "motor-structure-learning"
-description = "A neural network model of motor structure learning, implemented in PyTorch."
 dynamic = ["version"]
+description = "A neural network model of motor structure learning, implemented in PyTorch."
 authors = [
     {name = "Cheshta Bhatia", email = "cheshta.bhatia@g.harvard.edu"},
-    {name = "Elom Amemastro", email = "elom.amemastro@g.harvard.edu"}]
+    {name = "Elom Amematsro", email = "elom.amematsro@g.harvard.edu"}
+]
 readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["motor learning", "neural networks", "pytorch", "computational neuroscience"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=2.0.0",
+    "matplotlib>=3.9.0",
+    "torch>=2.3.1",
+    "scipy>=1.13.0",
+    "scikit-learn>=1.5.0",
+]
+
+[project.scripts]
+motor-eval-test = "eval_test:main"
+motor-analyze-ec-similarity = "analyze_ec_similarity:main"
+motor-make-figs = "make_figs:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "build>=1.2",
+    "twine>=5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/cheshta2205/Neural-Network-model-for-motor-learning-"
+Repository = "https://github.com/cheshta2205/Neural-Network-model-for-motor-learning-"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "utils*"]
+
+[tool.setuptools]
+py-modules = [
+    "analyze_ec_similarity",
+    "eval_test",
+    "make_figs",
+    "train_ec_hc_cb",
+    "ec_module",
+    "hc_module",
+    "data",
+    "model",
+]
