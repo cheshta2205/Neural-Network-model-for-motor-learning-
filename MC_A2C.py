@@ -42,7 +42,7 @@ MC_HIDDEN    = 256
 
 MAX_STEPS    = 40
 N_PHASE_EP   = 4000
-GOAL_RADIUS  = 1.5
+GOAL_RADIUS  = 0.8
 GRID_SIZE    = 4.0
 DT           = 1.0
 
@@ -393,8 +393,8 @@ def run_babab(seed=0):
 
 
 # ── Plotting ──────────────────────────────────────────────────────────────────
-SW     = 40
-SW_ACC = 40
+SW     = 5
+SW_ACC = 5
 ep_local = np.arange(1, N_PHASE_EP + 1)
 
 
