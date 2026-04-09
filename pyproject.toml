@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "motor-structure-learning"
+description = "A neural network model of motor structure learning, implemented in PyTorch."
+dynamic = ["version"]
+authors = [
+    {name = "Cheshta Bhatia", email = "cheshta.bhatia@g.harvard.edu"},
+    {name = "Elom Amemastro", email = "elom.amemastro@g.harvard.edu"}]
+readme = "README.md"
