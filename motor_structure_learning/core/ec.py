@@ -3,7 +3,7 @@ import torch.nn as nn
 
 
 class EntorhinalCortex(nn.Module):
-    def __init__(self, input_dim=6, hidden_dim=256, latent_dim=16):
+    def __init__(self, input_dim=8, hidden_dim=256, latent_dim=16):
         super().__init__()
 
         self.gru = nn.GRU(
