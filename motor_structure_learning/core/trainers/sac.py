@@ -37,7 +37,6 @@ class SACBatch:
 SACActor = Any
 SACQNetwork = Any
 
-
 class SACTrainer(BaseTrainer):
     """CleanRL-style SAC trainer for continuous-action experiments."""
 
