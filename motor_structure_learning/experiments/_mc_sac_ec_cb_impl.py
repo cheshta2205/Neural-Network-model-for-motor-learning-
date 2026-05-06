@@ -333,6 +333,7 @@ def run_babab(
         "alpha": [],
         "q_target_mean": [],
         "log_pi_mean": [],
+        "occurrence": [],
     }
 
     global_step = 0
@@ -465,6 +466,7 @@ def run_babab(
             curve["alpha"].append(float(latest_update["alpha"]))
             curve["q_target_mean"].append(float(latest_update["q_target_mean"]))
             curve["log_pi_mean"].append(float(latest_update["log_pi_mean"]))
+            curve["occurrence"].append(phase_idx // len(base.PHASE_DATA))
 
             if local_ep % 50 == 0:
                 w = min(50, len(curve["success"]))

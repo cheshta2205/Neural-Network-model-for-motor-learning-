@@ -18,6 +18,7 @@ from typing import Optional
 import numpy as np
 import torch
 import torch.nn as nn
+import pandas as pd
 
 from motor_structure_learning.core.ec import EntorhinalCortex
 from motor_structure_learning.core.trainers import SACTrainer, ECCBTrainer, ECCBBatch
@@ -32,8 +33,7 @@ def get_device():
     else:
         return "cpu"
     
-# Change default params for ablation sweep
-
+base.N_PHASE_EP = 500
 
 EC_HIDDEN = 256
 EC_LATENT = 32
@@ -50,6 +50,23 @@ DEVICE = get_device()
 PRIORITY_GAMMA_T = 5000.0
 PRIORITY_GAMMA_TD = 1.0
 PRIORITY_MIX = 0.02
+
+# Define Configurations
+
+CONFIG_PRESETS = [
+    {"name": "baseline", "desc": "Motor cortex trained with SAC no EC/CB",
+     "use_ec": False, "use_cb": False, "use_pretrained_ec_cb": False, "freeze_pretrained_ec_cb": False,
+     "priority_gamma_t": 500.0, "priority_gamma_td": 1.0, "priority_mix": 0.02},
+    {"name": "full", "desc": "Add both EC and CB features, with frozen pretrained weights",
+     "use_ec": True, "use_cb": True, "use_pretrained_ec_cb": True, "freeze_pretrained_ec_cb": True,
+     "priority_gamma_t": 500.0, "priority_gamma_td": 1.0, "priority_mix": 0.02},
+    {"name": "cb_only", "desc": "Add CB features, no EC, no recency bias",
+     "use_ec": False, "use_cb": True, "use_pretrained_ec_cb": True, "freeze_pretrained_ec_cb": False,
+     "priority_gamma_t": 500.0, "priority_gamma_td": 1.0, "priority_mix": 0.02},
+    {"name": "full_end_to_end", "desc": "Add both EC and CB features, with pretrained weights, no freezing, no recency bias",
+     "use_ec": True, "use_cb": True, "use_pretrained_ec_cb": False, "freeze_pretrained_ec_cb": False,
+     "priority_gamma_t": 500.0, "priority_gamma_td": 1.0, "priority_mix": 0.02},
+]
 
 
 def _compute_aug_obs_dim(use_ec: bool, use_cb: bool) -> int:
@@ -125,14 +142,14 @@ def _load_ec_cb_if_available(ec: EntorhinalCortex, cb: CerebellumCB, ckpt_path: 
     ckpt = torch.load(ckpt_path, map_location=device)
 
     loaded_any = False
-    if "ec" in ckpt:
+    if "ec" in ckpt and ec is not None:
         ec_sd = _remap_legacy_ec_state_dict(ckpt["ec"])
         ec.load_state_dict(ec_sd, strict=True)
         loaded_any = True
     else:
         print("Checkpoint has no 'ec' key. EC left randomly initialized.")
 
-    if "cb" in ckpt:
+    if "cb" in ckpt and cb is not None:
         cb_sd = _remap_legacy_cb_state_dict(ckpt["cb"])
         cb.load_state_dict(cb_sd, strict=True)
         loaded_any = True
@@ -142,7 +159,6 @@ def _load_ec_cb_if_available(ec: EntorhinalCortex, cb: CerebellumCB, ckpt_path: 
     if loaded_any:
         print(f"Loaded EC/CB weights from {ckpt_path}")
     return loaded_any
-
 
 def _build_aug_obs(
     base_obs: np.ndarray,
@@ -229,13 +245,12 @@ class TimeTDEPrioritizedReplayBuffer:
         if h_ec is not None:
             self.h_ec_prev.append(h_ec.detach().cpu().numpy().astype(np.float32).copy())
         else:
-            self.h_ec_prev.append(np.zeros((1, 1, self.ec_hidden_dim), dtype=np.float32))
+            self.h_ec_prev.append(np.zeros((1, self.ec_hidden_dim), dtype=np.float32))
 
     def _sampling_probs(self, t_now: int) -> np.ndarray:
         dt = np.maximum(0.0, float(t_now) - np.asarray(self.timesteps, dtype=np.float64))
-        abs_tde = np.asarray(self.abs_tdes, dtype=np.float64)
 
-        energy = dt / max(self.gamma_t, 1e-8) + abs_tde / max(self.gamma_td, 1e-8)
+        energy = dt / max(self.gamma_t, 1e-8)
         logits = -energy
         logits -= np.max(logits)
         probs = np.exp(logits)
@@ -267,6 +282,7 @@ class TimeTDEPrioritizedReplayBuffer:
         s_t_next = torch.tensor(np.stack([self.s_t_next[i] for i in idxs]), device=device)
         pred_err_t = torch.tensor(np.stack([self.pred_err_t[i] for i in idxs]), device=device)
         h_ec_prev = torch.tensor(np.stack([self.h_ec_prev[i] for i in idxs]), device=device)
+
         h_ec_prev = h_ec_prev.permute(1, 0, 2).contiguous()
 
         batch = base.SACBatch(
@@ -327,7 +343,7 @@ def _update_ec_hidden(
 ):
     """Update EC hidden state. Skip if use_ec=False."""
     if not use_ec or ec is None:
-        return h_ec
+        return h_ec, torch.zeros(1, 2, device=device)
     
     with torch.no_grad():
         z_ec = ec.readout(h_ec.squeeze(0))
@@ -448,6 +464,8 @@ def run_babab(
     curve = {
         "ep": [],
         "phase": [],
+        "occurrence": [],
+        "label": [],
         "success": [],
         "steps": [],
         "dist_norm": [],
@@ -465,8 +483,12 @@ def run_babab(
     global_step = 0
     global_ep = 0
 
-    for phase_idx, ctx in enumerate(base.PHASES):
-        print(f"\nPhase {base.PHASE_LABELS[phase_idx]} ({base.N_PHASE_EP} episodes)...")
+    for phase_idx in range(base.N_PHASES):
+        phase_id = phase_idx % len(base.PHASE_DATA)
+        occurrence = phase_idx // len(base.PHASE_DATA)
+        ctx = base.PHASE_DATA[phase_id]["params"]
+        name = base.PHASE_DATA[phase_id]["label"]
+        print(f"\nPhase {name} ({base.N_PHASE_EP} episodes)...")
 
         for local_ep in range(1, base.N_PHASE_EP + 1):
             global_ep += 1
@@ -482,10 +504,9 @@ def run_babab(
             base_obs_np = base.build_obs(pos_np, goal_np, prev_action_np)
             init_dist = float(np.linalg.norm(pos_np - goal_np))
 
-            h_ec = torch.zeros(1, 1, EC_HIDDEN, device=device) if use_ec else None
+            h_ec = torch.zeros(1, 1, EC_HIDDEN, device=device)
             z_ec_t, z_cb_t = _current_features(ec, cb, cb_proj, h_ec, pos_np, prev_action_np, device, use_ec, use_cb)
             obs_np = _build_aug_obs(base_obs_np, z_ec_t, z_cb_t, use_ec, use_cb)
-
             rewards = []
             dist_seq = []
             angle_seq = []
@@ -540,12 +561,11 @@ def run_babab(
                 if first_angle is None:
                     first_angle = alpha
 
-                h_ec_prev = h_ec.clone() if h_ec is not None else None
+                h_ec_prev = h_ec.clone()
                 h_ec, pred_err = _update_ec_hidden(ec, cb, h_ec, pos_np, action_np, s_next_np, device, use_ec)
                 next_base_obs_np = base.build_obs(s_next_np, goal_np, action_np)
                 next_z_ec_t, next_z_cb_t = _current_features(ec, cb, cb_proj, h_ec, s_next_np, action_np, device, use_ec, use_cb)
                 next_obs_np = _build_aug_obs(next_base_obs_np, next_z_ec_t, next_z_cb_t, use_ec, use_cb)
-
                 replay_buffer.add(
                     obs_np,
                     action_np,
@@ -585,7 +605,6 @@ def run_babab(
                             pred_err_t=pred_err_t,
                             h_ec_prev=h_ec_prev
                         )
-
                         ec_cb_update = ec_cb_trainer.update(ec_cb_batch)
                         latest_update.update(ec_cb_update)
                     replay_buffer.update_abs_tde(idxs, abs_tde.detach().cpu().numpy())
@@ -606,8 +625,10 @@ def run_babab(
             mean_angle = float(np.mean(angle_seq)) if angle_seq else 0.0
             first_angle = first_angle if first_angle is not None else 0.0
 
-            curve["ep"].append(global_ep)
+            curve["ep"].append(local_ep)
             curve["phase"].append(phase_idx)
+            curve["occurrence"].append(occurrence)
+            curve["label"].append(name)
             curve["success"].append(float(success))
             curve["steps"].append(float(steps))
             curve["dist_norm"].append(float(dist_norm))
@@ -619,9 +640,7 @@ def run_babab(
             curve["alpha"].append(float(latest_update["alpha"]))
             curve["q_target_mean"].append(float(latest_update["q_target_mean"]))
             curve["log_pi_mean"].append(float(latest_update["log_pi_mean"]))
-
-            if ec_cb_trainer is not None:
-                curve["ec_cb_loss"].append(float(latest_update.get("ec_cb_loss", np.nan)))
+            curve["ec_cb_loss"].append(float(latest_update.get("ec_cb_loss", np.nan)))
 
             if local_ep % 50 == 0:
                 w = min(50, len(curve["success"]))
@@ -650,6 +669,28 @@ def run_babab(
     return curve
 
 
+def run_named_sweep(presets, seeds: int, base_fig_dir: str, save_agg: bool = True):
+    for cfg in presets:
+        cfg_name = cfg.get("name", "baseline")
+        cfg_fig_dir = os.path.join(base_fig_dir, cfg_name)
+        os.makedirs(cfg_fig_dir, exist_ok=True)
+        print(f"\nRunning config: {cfg_name} -> saving to {cfg_fig_dir}")
+        main(
+            seeds=seeds,
+            use_ec=cfg.get("use_ec", True),
+            use_cb=cfg.get("use_cb", True),
+            use_pretrained_ec_cb=cfg.get("use_pretrained_ec_cb", USE_PRETRAINED_EC_CB),
+            freeze_pretrained_ec_cb=cfg.get("freeze_pretrained_ec_cb", FREEZE_PRETRAINED_EC_CB),
+            ec_cb_ckpt=cfg.get("ec_cb_ckpt", EC_CB_CKPT),
+            fig_dir=cfg_fig_dir,
+            priority_gamma_t=cfg.get("priority_gamma_t", PRIORITY_GAMMA_T),
+            priority_gamma_td=cfg.get("priority_gamma_td", PRIORITY_GAMMA_TD),
+            priority_mix=cfg.get("priority_mix", PRIORITY_MIX),
+            save_agg=save_agg,
+            config_name=cfg_name,
+        )
+
+
 def main(
     seeds: int = 5,
     use_ec: bool = True,
@@ -661,9 +702,14 @@ def main(
     priority_gamma_t: float = PRIORITY_GAMMA_T,
     priority_gamma_td: float = PRIORITY_GAMMA_TD,
     priority_mix: float = PRIORITY_MIX,
+    save_agg: bool = True,
+    config_name: Optional[str] = None,
 ):
     print(f"Device: {DEVICE}")
     os.makedirs(fig_dir, exist_ok=True)
+
+    if config_name is None:
+        config_name = "custom"
 
     print(
         "Config | "
@@ -710,8 +756,32 @@ def main(
             'priority_gamma_t': priority_gamma_t,
             'priority_gamma_td': priority_gamma_td,
             'priority_mix': priority_mix,
+            'config_name': config_name,
         }
         base.plot_seed(seed, curve, base.GOAL_RADIUS, seed_dir, key_params=key_params)
+
+        # Convert per-seed curve dict to DataFrame and annotate with config
+        try:
+            df = pd.DataFrame(curve)
+        except Exception:
+            # Fallback: coerce into DataFrame via items
+            df = pd.DataFrame({k: np.asarray(v) for k, v in curve.items()})
+        for k, v in key_params.items():
+            df[k] = v
+        df['seed'] = int(seed)
+        if 'all_runs' not in locals():
+            all_runs = []
+        all_runs.append(df)
+
+    # Aggregate across seeds and save
+    if 'all_runs' in locals() and all_runs:
+        agg_df = pd.concat(all_runs, ignore_index=True)
+        if save_agg:
+            csv_path = os.path.join(fig_dir, "aggregated_results.csv")
+            pkl_path = os.path.join(fig_dir, "aggregated_results.pkl")
+            agg_df.to_csv(csv_path, index=False)
+            agg_df.to_pickle(pkl_path)
+            print(f"Aggregated results saved to {csv_path} and {pkl_path}")
 
     print(f"\nDone. Figures saved to {fig_dir}")
 
@@ -804,20 +874,39 @@ def _parse_args():
         help="Allow EC/CB parameters to remain trainable (not optimized by SAC by default).",
     )
 
+    parser.set_defaults(save_agg=True)
+    parser.add_argument(
+        "--no-save-agg",
+        dest="save_agg",
+        action="store_false",
+        help="Do not save aggregated DataFrame (CSV/pickle) after runs.",
+    )
+
+    parser.set_defaults(sweep=False)
+    parser.add_argument(
+        "--sweep",
+        dest="sweep",
+        action="store_true",
+        help="Run the named config sweep (uses CONFIG_PRESETS).",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
-    main(
-        seeds=args.seeds,
-        use_ec=args.use_ec,
-        use_cb=args.use_cb,
-        use_pretrained_ec_cb=args.use_pretrained_ec_cb,
-        freeze_pretrained_ec_cb=args.freeze_pretrained_ec_cb,
-        ec_cb_ckpt=args.ec_cb_ckpt,
-        fig_dir=args.fig_dir,
-        priority_gamma_t=args.priority_gamma_t,
-        priority_gamma_td=args.priority_gamma_td,
-        priority_mix=args.priority_mix,
-    )
+    if getattr(args, "sweep", False):
+        run_named_sweep(CONFIG_PRESETS, seeds=args.seeds, base_fig_dir=args.fig_dir, save_agg=args.save_agg)
+    else:
+        main(
+            seeds=args.seeds,
+            use_ec=args.use_ec,
+            use_cb=args.use_cb,
+            use_pretrained_ec_cb=args.use_pretrained_ec_cb,
+            freeze_pretrained_ec_cb=args.freeze_pretrained_ec_cb,
+            ec_cb_ckpt=args.ec_cb_ckpt,
+            fig_dir=args.fig_dir,
+            priority_gamma_t=args.priority_gamma_t,
+            priority_gamma_td=args.priority_gamma_td,
+            priority_mix=args.priority_mix,
+            save_agg=args.save_agg,
+        )

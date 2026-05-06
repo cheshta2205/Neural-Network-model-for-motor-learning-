@@ -55,9 +55,15 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 CTX_A = (1.0, np.pi / 3, 0.0, 0.0, 0.0, 0.0, "A: rot+60")
 CTX_B = (1.0, 0.0, +0.4, 0.0, 0.0, 0.0, "B: curl+")
-PHASES = [CTX_B, CTX_A, CTX_B, CTX_A, CTX_B]
-PHASE_LABELS = ["B1: curl+", "A1: rot+60°", "B2: curl+", "A2: rot+60°", "B3: curl+"]
 
+PHASE_REPS = 3
+
+PHASE_DATA = [
+    {"label": "A (rot +60°)", "params": CTX_A},
+    {"label": "B (curl+)", "params": CTX_B}
+]
+
+N_PHASES = len(PHASE_DATA) * PHASE_REPS
 
 def env_step_np(pos, vel, action, beta, theta, gamma_curl, g_dyn, bx, by):
     c, s = np.cos(theta), np.sin(theta)
@@ -180,6 +186,7 @@ def plot_seed(seed, curve, radius, fig_dir, key_params=None):
     set_plt_params(style='fast')
 
     fig, axes = plt.subplots(3, 1, figsize=(9, 9), sharex=True, constrained_layout=True)
+    
     for ax, key, color, label in [
         (axes[0], "q_loss", "tomato", "Q loss"),
         (axes[1], "actor_loss", "steelblue", "Actor loss"),
@@ -188,7 +195,6 @@ def plot_seed(seed, curve, radius, fig_dir, key_params=None):
         y = smooth(curve[key])
         ax.plot(ep_g[24:], y, color=color, lw=1.5)
         ax.axhline(0, color="black", ls=":", lw=0.7)
-        add_phase_labels(ax)
         ax.set_ylabel(label, fontsize=8)
         ax.spines[["top", "right"]].set_visible(False)
     axes[2].set_xlabel("Episode (global)")
@@ -200,7 +206,7 @@ def plot_seed(seed, curve, radius, fig_dir, key_params=None):
     fig, ax = plt.subplots(figsize=(12, 3), constrained_layout=True)
     y = smooth(curve["success"])
     ax.plot(ep_g[24:], y, lw=1.7)
-    add_phase_labels(ax)
+
     ax.set_ylim(0, 1)
     ax.set_xlim(ep_g[0], ep_g[-1] + 1)
     ax.set_ylabel("Success")
@@ -218,7 +224,7 @@ def plot_seed(seed, curve, radius, fig_dir, key_params=None):
     fig, ax = plt.subplots(figsize=(12, 3), constrained_layout=True)
     y = smooth(curve["return"])
     ax.plot(ep_g[24:], y, lw=1.7, color="seagreen")
-    add_phase_labels(ax)
+    # add_phase_labels(ax)
     ax.set_ylabel("Return")
     ax.set_xlim(ep_g[0], ep_g[-1] + 1)
     ax.set_xlabel("Episode (global)")
