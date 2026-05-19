@@ -53,7 +53,7 @@ SUCCESS_BONUS = 5.0
 FIG_DIR = "figs/mc_sac"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-CTX_A = (1.0, np.pi / 3, 0.0, 0.0, 0.0, 0.0, "A: rot+60")
+CTX_A = (1.0, np.pi / 3, 0.0, 0.0, 0.0, 0.0, "A: rot+60") # (gain, rotation, curl, drift_strength, drift_x, drift_y, label)
 CTX_B = (1.0, 0.0, +0.4, 0.0, 0.0, 0.0, "B: curl+")
 
 PHASE_REPS = 3
@@ -200,7 +200,7 @@ def plot_seed(seed, curve, radius, fig_dir, key_params=None):
     axes[2].set_xlabel("Episode (global)")
     fig.suptitle(f"SAC diagnostic curves (radius {radius}, seed {seed})", fontsize=11)
     make_axis_nice(fig)
-    plt.savefig(os.path.join(fig_dir, "diagnostic_losses.png"), dpi=300)
+    plt.savefig(os.path.join(fig_dir, "diagnostic_losses"))
     plt.close()
 
     fig, ax = plt.subplots(figsize=(12, 3), constrained_layout=True)
@@ -218,7 +218,7 @@ def plot_seed(seed, curve, radius, fig_dir, key_params=None):
     
     ax.spines[["top", "right"]].set_visible(False)
     make_axis_nice(ax)
-    plt.savefig(os.path.join(fig_dir, "success_curve.png"), dpi=300)
+    plt.savefig(os.path.join(fig_dir, "success_curve"))
     plt.close()
 
     fig, ax = plt.subplots(figsize=(12, 3), constrained_layout=True)
@@ -226,6 +226,7 @@ def plot_seed(seed, curve, radius, fig_dir, key_params=None):
     ax.plot(ep_g[24:], y, lw=1.7, color="seagreen")
     # add_phase_labels(ax)
     ax.set_ylabel("Return")
+    ax.set_ylim(-40, SUCCESS_BONUS)
     ax.set_xlim(ep_g[0], ep_g[-1] + 1)
     ax.set_xlabel("Episode (global)")
     fig.suptitle(f"Episode return curve\n (radius {radius}, seed {seed})", fontsize=11)
@@ -234,7 +235,7 @@ def plot_seed(seed, curve, radius, fig_dir, key_params=None):
         ax.set_title(param_str, fontsize=7)
     ax.spines[["top", "right"]].set_visible(False)
     make_axis_nice(ax)
-    plt.savefig(os.path.join(fig_dir, "return_curve.png"), dpi=300)
+    plt.savefig(os.path.join(fig_dir, "return_curve"))
     plt.close()
 
 

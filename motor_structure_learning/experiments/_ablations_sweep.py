@@ -33,12 +33,34 @@ def get_device():
     else:
         return "cpu"
     
+
+CTX_A = (1.0, np.pi / 3, 0.0, 0.0, 0.0, 0.0, "A: rot+60")
+CTX_B = (1.0, 0.0, +0.4, 0.0, 0.0, 0.0, "B: curl+")
+CTX_C = (1.0, -np.pi / 3, 0.0, 0.0, 0.0, 0.0, "C: rot-60")
+CTX_D = (1.0, 0.0, -0.4, 0.0, 0.0, 0.0, "D: curl-")
+
+
+PHASE_REPS = 3
+
+PHASE_DATA = [
+    {"label": "A (rot +60°)", "params": CTX_A},
+    {"label": "B (curl+)", "params": CTX_B},
+    {"label": "C (rot -60°)", "params": CTX_C},
+    {"label": "D (curl-)", "params": CTX_D}
+]
+
+N_PHASES = len(PHASE_DATA) * PHASE_REPS
+    
 base.N_PHASE_EP = 500
+base.PHASE_DATA = PHASE_DATA
+base.N_PHASES = N_PHASES
+base.PHASE_REPS = PHASE_REPS
 
 EC_HIDDEN = 256
 EC_LATENT = 32
 CB_HIDDEN = 256
 CB_PROJ_DIM = 32
+ORACLE_CTX_DIM = 32
 
 USE_PRETRAINED_EC_CB = True
 FREEZE_PRETRAINED_EC_CB = False
@@ -56,26 +78,31 @@ PRIORITY_MIX = 0.02
 CONFIG_PRESETS = [
     {"name": "baseline", "desc": "Motor cortex trained with SAC no EC/CB",
      "use_ec": False, "use_cb": False, "use_pretrained_ec_cb": False, "freeze_pretrained_ec_cb": False,
-     "priority_gamma_t": 500.0, "priority_gamma_td": 1.0, "priority_mix": 0.02},
-    {"name": "full", "desc": "Add both EC and CB features, with frozen pretrained weights",
-     "use_ec": True, "use_cb": True, "use_pretrained_ec_cb": True, "freeze_pretrained_ec_cb": True,
-     "priority_gamma_t": 500.0, "priority_gamma_td": 1.0, "priority_mix": 0.02},
-    {"name": "cb_only", "desc": "Add CB features, no EC, no recency bias",
-     "use_ec": False, "use_cb": True, "use_pretrained_ec_cb": True, "freeze_pretrained_ec_cb": False,
-     "priority_gamma_t": 500.0, "priority_gamma_td": 1.0, "priority_mix": 0.02},
+     "priority_gamma_t": 1000.0, "priority_gamma_td": 1.0, "priority_mix": 0.02, "use_oracle": False},
     {"name": "full_end_to_end", "desc": "Add both EC and CB features, with pretrained weights, no freezing, no recency bias",
      "use_ec": True, "use_cb": True, "use_pretrained_ec_cb": False, "freeze_pretrained_ec_cb": False,
-     "priority_gamma_t": 500.0, "priority_gamma_td": 1.0, "priority_mix": 0.02},
+     "priority_gamma_t": 1000.0, "priority_gamma_td": 1.0, "priority_mix": 0.02, "use_oracle": False},
+    {"name": "oracle", "desc": "Add one-hot context encoding of the current phase, no EC/CB",
+     "use_ec": False, "use_cb": False, "use_pretrained_ec_cb": False, "freeze_pretrained_ec_cb": False,
+     "priority_gamma_t": 1000.0, "priority_gamma_td": 1.0, "priority_mix": 0.02, "use_oracle": True},
+     {"name": "full", "desc": "Add both EC and CB features, with frozen pretrained weights",
+     "use_ec": True, "use_cb": True, "use_pretrained_ec_cb": True, "freeze_pretrained_ec_cb": True,
+     "priority_gamma_t": 1000.0, "priority_gamma_td": 1.0, "priority_mix": 0.02, "use_oracle": False},
+    {"name": "cb_only", "desc": "Add CB features, no EC, no recency bias",
+     "use_ec": False, "use_cb": True, "use_pretrained_ec_cb": True, "freeze_pretrained_ec_cb": False,
+     "priority_gamma_t": 1000.0, "priority_gamma_td": 1.0, "priority_mix": 0.02, "use_oracle": False},
 ]
 
 
-def _compute_aug_obs_dim(use_ec: bool, use_cb: bool) -> int:
+def _compute_aug_obs_dim(use_ec: bool, use_cb: bool, use_oracle_ctx: bool) -> int:
     """Compute observation dimension based on which modules are enabled."""
     dim = base.OBS_DIM
     if use_ec:
         dim += EC_LATENT
     if use_cb:
         dim += CB_PROJ_DIM
+    if use_oracle_ctx:
+        dim += ORACLE_CTX_DIM
     return dim
 
 
@@ -166,6 +193,8 @@ def _build_aug_obs(
     z_cb: Optional[torch.Tensor],
     use_ec: bool,
     use_cb: bool,
+    use_oracle: bool,
+    ctx_one_hot: Optional[np.ndarray] = None
 ) -> np.ndarray:
     """Build augmented observation, conditionally including EC and CB features."""
     components = [base_obs]
@@ -178,6 +207,9 @@ def _build_aug_obs(
         z_cb_np = z_cb.detach().cpu().numpy().astype(np.float32).reshape(-1)
         components.append(z_cb_np)
     
+    if use_oracle and ctx_one_hot is not None:
+        components.append(ctx_one_hot.astype(np.float32).reshape(-1))
+
     return np.concatenate(components, axis=0).astype(np.float32)
 
 
@@ -357,11 +389,17 @@ def _update_ec_hidden(
         _, h_new = ec(transition_t, h_ec)
     return h_new, pred_err_t
 
+def _context_one_hot(phase_id: int) -> np.ndarray:
+    """Return one-hot encoding of the current phase_id for oracle ablation."""
+    v = np.zeros(ORACLE_CTX_DIM, dtype=np.float32)
+    v[int(phase_id)] = 1
+    return v
 
 def run_babab(
     seed: int = 0,
     use_ec: bool = True,
     use_cb: bool = True,
+    use_oracle: bool = False,
     use_pretrained_ec_cb: bool = USE_PRETRAINED_EC_CB,
     freeze_pretrained_ec_cb: bool = FREEZE_PRETRAINED_EC_CB,
     ec_cb_lr: float = 1e-4,
@@ -375,7 +413,7 @@ def run_babab(
     torch.manual_seed(seed)
 
     # Compute dynamic obs dimension
-    aug_obs_dim = _compute_aug_obs_dim(use_ec, use_cb)
+    aug_obs_dim = _compute_aug_obs_dim(use_ec, use_cb, use_oracle)
 
     # Initialize EC and CB (may be None if not used)
     ec = None
@@ -463,6 +501,7 @@ def run_babab(
 
     curve = {
         "ep": [],
+        "global_ep": [],
         "phase": [],
         "occurrence": [],
         "label": [],
@@ -487,6 +526,7 @@ def run_babab(
         phase_id = phase_idx % len(base.PHASE_DATA)
         occurrence = phase_idx // len(base.PHASE_DATA)
         ctx = base.PHASE_DATA[phase_id]["params"]
+        ctx_oracle = _context_one_hot(phase_id)
         name = base.PHASE_DATA[phase_id]["label"]
         print(f"\nPhase {name} ({base.N_PHASE_EP} episodes)...")
 
@@ -506,7 +546,7 @@ def run_babab(
 
             h_ec = torch.zeros(1, 1, EC_HIDDEN, device=device)
             z_ec_t, z_cb_t = _current_features(ec, cb, cb_proj, h_ec, pos_np, prev_action_np, device, use_ec, use_cb)
-            obs_np = _build_aug_obs(base_obs_np, z_ec_t, z_cb_t, use_ec, use_cb)
+            obs_np = _build_aug_obs(base_obs_np, z_ec_t, z_cb_t, use_ec, use_cb, use_oracle, ctx_oracle)
             rewards = []
             dist_seq = []
             angle_seq = []
@@ -565,7 +605,8 @@ def run_babab(
                 h_ec, pred_err = _update_ec_hidden(ec, cb, h_ec, pos_np, action_np, s_next_np, device, use_ec)
                 next_base_obs_np = base.build_obs(s_next_np, goal_np, action_np)
                 next_z_ec_t, next_z_cb_t = _current_features(ec, cb, cb_proj, h_ec, s_next_np, action_np, device, use_ec, use_cb)
-                next_obs_np = _build_aug_obs(next_base_obs_np, next_z_ec_t, next_z_cb_t, use_ec, use_cb)
+                next_obs_np = _build_aug_obs(next_base_obs_np, next_z_ec_t, next_z_cb_t, use_ec,
+                                              use_cb, use_oracle, ctx_oracle)
                 replay_buffer.add(
                     obs_np,
                     action_np,
@@ -626,6 +667,7 @@ def run_babab(
             first_angle = first_angle if first_angle is not None else 0.0
 
             curve["ep"].append(local_ep)
+            curve["global_ep"].append(global_ep)
             curve["phase"].append(phase_idx)
             curve["occurrence"].append(occurrence)
             curve["label"].append(name)
@@ -647,6 +689,7 @@ def run_babab(
                 if ec_cb_trainer is not None:
                     print(
                         f"  ep {local_ep:4d} | "
+                        f" global_ep {global_ep:5d} | "
                         f"succ={np.mean(curve['success'][-w:]):.2f} | "
                         f"ret={np.mean(curve['return'][-w:]):.1f} | "
                         f"q_loss={np.mean(curve['q_loss'][-w:]):.4f} | "
@@ -658,6 +701,7 @@ def run_babab(
                 else:
                     print(
                         f"  ep {local_ep:4d} | "
+                        f" global_ep {global_ep:5d} | "
                         f"succ={np.mean(curve['success'][-w:]):.2f} | "
                         f"ret={np.mean(curve['return'][-w:]):.1f} | "
                         f"q_loss={np.mean(curve['q_loss'][-w:]):.4f} | "
@@ -679,6 +723,7 @@ def run_named_sweep(presets, seeds: int, base_fig_dir: str, save_agg: bool = Tru
             seeds=seeds,
             use_ec=cfg.get("use_ec", True),
             use_cb=cfg.get("use_cb", True),
+            use_oracle=cfg.get("use_oracle", False),
             use_pretrained_ec_cb=cfg.get("use_pretrained_ec_cb", USE_PRETRAINED_EC_CB),
             freeze_pretrained_ec_cb=cfg.get("freeze_pretrained_ec_cb", FREEZE_PRETRAINED_EC_CB),
             ec_cb_ckpt=cfg.get("ec_cb_ckpt", EC_CB_CKPT),
@@ -695,6 +740,7 @@ def main(
     seeds: int = 5,
     use_ec: bool = True,
     use_cb: bool = True,
+    use_oracle: bool = False,
     use_pretrained_ec_cb: bool = USE_PRETRAINED_EC_CB,
     freeze_pretrained_ec_cb: bool = FREEZE_PRETRAINED_EC_CB,
     ec_cb_ckpt: str = EC_CB_CKPT,
@@ -716,6 +762,7 @@ def main(
         f"seeds={seeds}, "
         f"use_ec={use_ec}, "
         f"use_cb={use_cb}, "
+        f"use_oracle={use_oracle}, "
         f"use_pretrained_ec_cb={use_pretrained_ec_cb}, "
         f"freeze_pretrained_ec_cb={freeze_pretrained_ec_cb}, "
         f"ec_cb_ckpt={ec_cb_ckpt}, "
@@ -739,6 +786,7 @@ def main(
                 seed=seed,
                 use_ec=use_ec,
                 use_cb=use_cb,
+                use_oracle=use_oracle,
                 use_pretrained_ec_cb=use_pretrained_ec_cb,
                 freeze_pretrained_ec_cb=freeze_pretrained_ec_cb,
                 ec_cb_ckpt=ec_cb_ckpt,
@@ -756,6 +804,7 @@ def main(
             'priority_gamma_t': priority_gamma_t,
             'priority_gamma_td': priority_gamma_td,
             'priority_mix': priority_mix,
+            'use_oracle': use_oracle,
             'config_name': config_name,
         }
         base.plot_seed(seed, curve, base.GOAL_RADIUS, seed_dir, key_params=key_params)
@@ -815,6 +864,22 @@ def _parse_args():
         action="store_false",
         help="Disable CB features.",
     )
+
+    parser.set_defaults(use_oracle=False)
+    parser.add_argument(
+        "--use-oracle",
+        dest="use_oracle",
+        action="store_true",
+        help="Enable oracle context features (one-hot phase_id).",
+    )
+
+    parser.add_argument(
+        "--no-use-oracle",
+        dest="use_oracle",
+        action="store_false",
+        help="Disable oracle context features.",
+    )
+
     parser.add_argument(
         "--ec-cb-ckpt",
         type=str,
@@ -909,4 +974,5 @@ if __name__ == "__main__":
             priority_gamma_td=args.priority_gamma_td,
             priority_mix=args.priority_mix,
             save_agg=args.save_agg,
+            use_oracle=args.use_oracle,
         )

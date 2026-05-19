@@ -122,69 +122,63 @@ class ECCBTrainer(BaseTrainer):
         return base_state, z_ec, z_cb
 
     def replay_ec_sequence(self, batch: ECCBBatch) -> torch.Tensor:
-        """Replay transitions through EC using stored h_ec context.
-        
-        This is an *exact* replay: uses the previous h_ec state and processes
-        the transition through the RNN, allowing gradients to flow through
-        the RNN weights.
-        
-        Args:
-            batch: Must have s_t, a_t, s_t_next, pred_err_t, and h_ec_prev populated
-            
-        Returns:
-            z_ec: [B, ec_latent_dim] latent representations from EC readout
-        """
         if self.ec is None or batch.s_t is None:
-            batch_size = batch.s_t.shape[0] if batch.s_t is not None else batch.observations.shape[0]
-            return torch.zeros(batch_size, self.ec_latent_dim, device=batch.observations.device)
-        
-        # Build transition tensor: [s_t, a_t, s_t+1, pred_err_t]
-        # Shape: [B, 1, 8] (for EC input_dim=8)
-        transition = torch.cat([batch.s_t, batch.a_t, batch.s_t_next, batch.pred_err_t], dim=-1)
-        transition = transition.unsqueeze(1)  # [B, 1, 8]
-        
-        # Use stored h_ec_prev as initial state for exact replay
+            bsz = batch.observations.shape[0]
+            return torch.zeros(bsz, self.ec_latent_dim, device=batch.observations.device)
+
+        # Initial hidden
         if batch.h_ec_prev is not None:
             h_ec_init = batch.h_ec_prev
+            if h_ec_init.dim() == 3 and h_ec_init.shape[0] != 1:
+                # if [B,1,H] accidentally comes in, convert to [1,B,H]
+                h_ec_init = h_ec_init.permute(1, 0, 2).contiguous()
         else:
-            # Fallback to zero if not provided
-            batch_size = transition.shape[0]
-            h_ec_init = torch.zeros(1, batch_size, self.ec_hidden_dim, device=transition.device, dtype=transition.dtype)
-        
-        # Forward through EC RNN with proper initial state
-        _, h_new = self.ec(transition, h_ec_init)  # h_new: [B, 1, hidden]
+            bsz = batch.s_t.shape[0]
+            h_ec_init = torch.zeros(1, bsz, self.ec_hidden_dim, device=batch.s_t.device, dtype=batch.s_t.dtype)
 
-        # Extract latent via readout
-        z_ec = self.ec.readout(h_new.squeeze(0))  # [B, hidden] -> [B, latent]
-        
+        # Recompute pred_err_t with grad
+        # z_prev from replayed hidden context (gradient flows into EC readout params)
+        z_prev = self.ec.readout(h_ec_init.squeeze(0))  # [B,H] -> [B,latent]
+
+        if self.use_cb and self.cb is not None:
+            cb_pred_prev = self.cb(batch.s_t, batch.a_t, z_prev)   # [B,2]
+            pred_err_t = cb_pred_prev - batch.s_t_next             # [B,2]
+        else:
+            # fallback if CB disabled
+            pred_err_t = batch.pred_err_t if batch.pred_err_t is not None else torch.zeros_like(batch.s_t_next)
+
+        transition = torch.cat([batch.s_t, batch.a_t, batch.s_t_next, pred_err_t], dim=-1).unsqueeze(1)  # [B,1,8]
+
+        _, h_new = self.ec(transition, h_ec_init)
+        z_ec = self.ec.readout(h_new.squeeze(0))
         return z_ec
 
     def compute_loss(self, batch: ECCBBatch) -> dict[str, torch.Tensor]:
-        """Compute EC/CB prediction loss with EC sequence replay.
-        
-        Returns:
-            Dict with 'total_loss' and 'cb_loss'
-        """
         losses = {}
-        
-        # Extract target position
-        next_s_t = batch.s_t_next if batch.s_t_next is not None else torch.zeros_like(batch.s_t)
-        
-        # Replay EC to get z_ec (with gradients!)
-        if self.use_ec and batch.s_t is not None:
+
+        if batch.s_t is None or batch.a_t is None or batch.s_t_next is None:
+            total_loss = torch.tensor(0.0, device=batch.observations.device)
+            return {"total_loss": total_loss}
+
+        # If EC is enabled, replay to get z_ec with gradient.
+        if self.use_ec:
             z_ec = self.replay_ec_sequence(batch)
         else:
-            z_ec = self._extract_state_and_features(batch.observations)[1]  # fallback to stored
-        
-        # CB prediction loss: CB(s_t, a_t, z_ec) -> s_{t+1}
-        if self.cb is not None and z_ec is not None and batch.s_t is not None:
-            cb_pred = self.cb(batch.s_t, batch.a_t, z_ec)  # [B, 2]
-            cb_loss = F.mse_loss(cb_pred, next_s_t)
+            # cb_only path: provide a deterministic zero EC context so CB can still train.
+            z_ec = torch.zeros(
+                batch.s_t.shape[0],
+                self.ec_latent_dim,
+                device=batch.s_t.device,
+                dtype=batch.s_t.dtype,
+            )
+
+        if self.cb is not None:
+            cb_pred = self.cb(batch.s_t, batch.a_t, z_ec)
+            cb_loss = F.mse_loss(cb_pred, batch.s_t_next)
             losses["cb_loss"] = cb_loss
-        
+
         total_loss = sum(losses.values()) if losses else torch.tensor(0.0, device=batch.observations.device)
         losses["total_loss"] = total_loss
-        
         return losses
 
     def update(self, batch: ECCBBatch) -> dict[str, float]:
@@ -207,8 +201,6 @@ class ECCBTrainer(BaseTrainer):
         total_loss.backward()
         self.clip_grad_norm_()
         self.optimizer.step()
-
-
 
         result = {
             "ec_cb_loss": float(total_loss.detach().item()),
