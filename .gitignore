@@ -1,0 +1,14 @@
+# Ignore all .DS_Store files
+**/.DS_Store
+
+# Ignore all .vscode directories
+**/.vscode/**
+
+# Ignore all __pycache__ directories
+**/__pycache__/
+
+# Ignore all .idea directories
+**/.idea/
+
+# Ignore all .conda directories
+**/.conda/**
