@@ -1,7 +1,7 @@
 """
-ECtoCB_train_MSE_6c.py
+ECtoCB_train_MSE_12c.py
 for paper FIG. 
-EC → CB trained on velocity-based dynamics with 6 contexts (rotation, curl, drift).
+EC → CB trained on velocity-based dynamics with 12 contexts (rotation, curl, drift).
 Same as ECtoCB_newcontexts_train.py but without the scale contexts (C6, C7).
 
 Dynamics -
@@ -27,14 +27,20 @@ Architecture (unchanged from ECtoCB_MSE_shiftedversion.py)
     CB input : [s_t, a_t, z_t]                 — 4 + LATENT_DIM dims
     CB output: s_{t+1} (predicted)             — 2 dims
 
-Contexts (6, switching once per sequence)
-------------------------------------------
-    C0: β=1.0, θ=+π/4, γ=0,    g=0             — rotation+
-    C1: β=1.0, θ=-π/4, γ=0,    g=0             — rotation-
-    C2: β=1.0, θ=0,    γ=+0.4, g=0             — curl+
-    C3: β=1.0, θ=0,    γ=-0.4, g=0             — curl-
-    C4: β=1.0, θ=0,    γ=0,    g=0.4, b=(+1,0) — drift+x
-    C5: β=1.0, θ=0,    γ=0,    g=0.4, b=(-1,0) — drift-x
+Contexts (12, switching once per sequence)
+-------------------------------------------
+    C0: β=1.0, θ=+π/2, γ=0,    g=0             — rotation+
+    C1: β=1.0, θ=+π/4, γ=0,    g=0             — rotation+
+    C2: β=1.0, θ=-π/2, γ=0,    g=0             — rotation-
+    C3: β=1.0, θ=-π/4, γ=0,    g=0             — rotation-
+    C4: β=1.0, θ=0,    γ=+0.7, g=0             — curl+
+    C5: β=1.0, θ=0,    γ=+0.4, g=0             — curl+
+    C6: β=1.0, θ=0,    γ=-0.7, g=0             — curl-
+    C7: β=1.0, θ=0,    γ=-0.4, g=0             — curl-
+    C8: β=1.0, θ=0,    γ=0,    g=0.4, b=(+1.5,0) — drift++
+    C9: β=1.0, θ=0,    γ=0,    g=0.4, b=(+1.0,0) — drift+
+    C10: β=1.0, θ=0,   γ=0,    g=0.4, b=(-1.5,0) — drift--
+    C11: β=1.0, θ=0,   γ=0,    g=0.4, b=(-1.0,0) — drift-
 
 β=1.0 default. Positive + negative for each FF type.
 """
@@ -47,48 +53,62 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
+from pathlib import Path
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.model_selection import cross_val_score
 from sklearn.decomposition import PCA
 from sklearn.metrics import confusion_matrix
+from src.PlottingTools.plotting_functions import set_plt_params, make_axis_nice, make_3d_gif
 
+
+# ── Contexts ───────────────────────────────────────────────────────────────────
+CONTEXTS = [
+    # (beta,  theta,      gamma,  g,    bx,   by,  c_id, label)
+    (1.0,  +np.pi/2,  0.0,    0.0,  0.0,  0.0,  0,  "C0: rot++", 0),
+    (1.0,  +np.pi/4,  0.0,    0.0,  0.0,  0.0,  1,  "C1: rot+", 0),
+    (1.0,  -np.pi/2,  0.0,    0.0,  0.0,  0.0,  2,  "C2: rot--", 0),
+    (1.0,  -np.pi/4,  0.0,    0.0,  0.0,  0.0,  3,  "C3: rot-", 0),
+    (1.0,   0.0,     +0.7,    0.0,  0.0,  0.0,  4,  "C4: curl++", 1),
+    (1.0,   0.0,     +0.4,    0.0,  0.0,  0.0,  5,  "C5: curl+", 1),
+    (1.0,   0.0,     -0.7,    0.0,  0.0,  0.0,  6,  "C6: curl--", 1),
+    (1.0,   0.0,     -0.4,    0.0,  0.0,  0.0,  7,  "C7: curl-", 1),
+    (1.0,   0.0,      0.0,    0.4, +1.5,  0.0,  8,  "C8: drift++", 2),
+    (1.0,   0.0,      0.0,    0.4, +1.0,  0.0,  9,  "C9: drift+", 2),
+    (1.0,   0.0,      0.0,    0.4, -1.5,  0.0,  10,  "C10: drift--", 2),
+    (1.0,   0.0,      0.0,    0.4, -1.0,  0.0,  11,  "C11: drift-", 2),
+]
+
+C_LABELS = {c[6]: c[7] for c in CONTEXTS}
+
+COLORS = {0: "#1c96c5", 1: "#20a7db", 2: "#62c1e5", 3: "#a0d9ef",
+        4: "#274e13", 5: "#38761d", 6: "#6aa84f", 7: "#93c47d",
+        8: "#800080", 9: "#be29ec", 10: "#d896ff", 11: "#efbbff"}
 
 # ── Hyperparameters ────────────────────────────────────────────────────────────
 SEQ_LEN    = 80
-N_TRAIN    = 2000
+N_TRAIN    = 15000
 N_VAL      = 200
-BATCH_SIZE = 128
-EPOCHS     = 300
+BATCH_SIZE = 256
+EPOCHS     = 50
 LR         = 1e-3
-LATENT_DIM = 32
+LATENT_DIM = 64
 EC_HIDDEN  = 256
 CB_HIDDEN  = 256
 EC_INPUT   = 8
 GRID_SIZE  = 4
 DT         = 1.0   # timestep
 
-CKPT_PATH  = "Paper/checkpoints/ectocb_6ctx_seq80_z32.pt"
-FIG_DIR    = "Paper/figs/ectocb_6ctx_seq80_z32.pt"
+CKPT_PATH  = f"./checkpoints/ectocb_{len(CONTEXTS)}ctx_seq{SEQ_LEN}_z{LATENT_DIM}/"
+FIG_DIR    = f"./figs/ectocb_{len(CONTEXTS)}ctx_seq{SEQ_LEN}_z{LATENT_DIM}.pt"
+CKPT_NAME = f"ectocb_{len(CONTEXTS)}ctx_seq{SEQ_LEN}_z{LATENT_DIM}"
 
 
 def seeded_ckpt_path(seed):
     """Return the CKPT_PATH with a `_seed{seed}` suffix before the extension."""
-    base, ext = os.path.splitext(CKPT_PATH)
-    return f"{base}_seed{seed}{ext}"
 
-# ── Contexts ───────────────────────────────────────────────────────────────────
-CONTEXTS = [
-    # (beta,  theta,      gamma,  g,    bx,   by,  c_id, label)
-    (1.0,  +np.pi/4,  0.0,    0.0,  0.0,  0.0,  0,  "C0: rot+"),
-    (1.0,  -np.pi/4,  0.0,    0.0,  0.0,  0.0,  1,  "C1: rot-"),
-    (1.0,   0.0,     +0.4,    0.0,  0.0,  0.0,  2,  "C2: curl+"),
-    (1.0,   0.0,     -0.4,    0.0,  0.0,  0.0,  3,  "C3: curl-"),
-    (1.0,   0.0,      0.0,    0.4, +1.0,  0.0,  4,  "C4: drift+x"),
-    (1.0,   0.0,      0.0,    0.4, -1.0,  0.0,  5,  "C5: drift-x"),
-]
-C_LABELS = {c[6]: c[7] for c in CONTEXTS}
-
+    base_path = Path(CKPT_PATH) / f"{CKPT_NAME}_seed{seed}.pt"
+    return str(base_path)
 
 # ── Environment step ───────────────────────────────────────────────────────────
 def env_step(pos, vel, action, beta, theta, gamma, g, bx, by):
@@ -149,7 +169,7 @@ def generate_sequences(n_seqs, seq_len=SEQ_LEN, seed=0):
         seq_trans, seq_ctx = [], []
 
         for t in range(seq_len):
-            beta, theta, gamma, g, bx, by, c_id, _ = (ctx_a if t < switch else ctx_b)
+            beta, theta, gamma, g, bx, by, c_id, _, _ = (ctx_a if t < switch else ctx_b)
 
             # continuous random action in [-1, 1]^2
             action = rng.uniform(-1, 1, size=2).astype(np.float32)
@@ -223,7 +243,7 @@ class CerebellumCB(nn.Module):
 
 
 # ── Sequential forward pass (unchanged) ───────────────────────────────────────
-def run_sequence(ec, cb, trans, device):
+def run_sequence(ec, cb, trans, device, return_representations=False):
     """
     Step through a batch of sequences feeding CB prediction error back into EC.
 
@@ -241,9 +261,12 @@ def run_sequence(ec, cb, trans, device):
 
     h      = ec.init_hidden(B, device)
     z_t    = torch.zeros(B, LATENT_DIM, device=device)
+
     s_pred = zeros2.clone()
 
     z_seq, s_pred_seq = [], []
+    ec_seq, cb_1_seq, cb_2_seq = [], [], []
+
 
     for t in range(T):
         s_t = trans[:, t, :2]
@@ -260,19 +283,42 @@ def run_sequence(ec, cb, trans, device):
 
         ec_input = torch.cat([s_tm1, a_tm1, s_t, e_t], dim=-1)
         z_t, h   = ec.step(ec_input, h)
+
+        cb_input = torch.cat([s_tm1, a_tm1, z_t], dim=-1)
+        cb_h1    = cb.net[1](cb.net[0](cb_input))
+        cb_h2    = cb.net[3](cb.net[2](cb_h1))
+
         s_pred   = cb(s_t, a_t, z_t)
 
         z_seq.append(z_t)
+        ec_seq.append(h)
+        cb_1_seq.append(cb_h1)
+        cb_2_seq.append(cb_h2)
+
         s_pred_seq.append(s_pred)
 
     z_seq      = torch.stack(z_seq,      dim=1)
+    ec_seq     = torch.stack(ec_seq,     dim=1)
+    cb_1_seq   = torch.stack(cb_1_seq,   dim=1)
+    cb_2_seq   = torch.stack(cb_2_seq,   dim=1)
+
     s_pred_seq = torch.stack(s_pred_seq, dim=1)
+
+    representations = {
+        'EC_hidden': ec_seq,
+        'CB_hidden_1': cb_1_seq,
+        'CB_hidden_2': cb_2_seq
+    }
+
+    if return_representations:
+        return z_seq, s_pred_seq, representations
 
     return z_seq, s_pred_seq
 
 
 # ── Evaluation + plots ─────────────────────────────────────────────────────────
 def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
+    set_plt_params(style='fast', file_format='png')
     ec.eval(); cb.eval()
     all_z, all_ctype = [], []
 
@@ -304,19 +350,24 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
     print(f"Logistic decode accuracy  : {acc:.4f}")
 
     os.makedirs(FIG_DIR, exist_ok=True)
-    colors  = {0: "steelblue", 1: "cornflowerblue",
-               2: "seagreen",  3: "limegreen",
-               4: "purple",    5: "violet"}
-    tag     = "EC→CB | velocity dynamics | 6 contexts (no scale)"
+    
+    colors = {0: "#1c96c5", 1: "#20a7db", 2: "#62c1e5", 3: "#a0d9ef",
+            4: "#274e13", 5: "#38761d", 6: "#6aa84f", 7: "#93c47d",
+            8: "#800080", 9: "#be29ec", 10: "#d896ff", 11: "#efbbff"}
+
+
+    tag     = "EC→CB | velocity dynamics | 12 contexts (no scale)"
 
     # Fig 1: training curve
     fig, ax = plt.subplots(figsize=(7, 4))
     ax.plot(history["train_mse"], label="train MSE", color="steelblue")
     ax.plot(history["val_mse"],   label="val MSE",   color="tomato")
+    ax.set_yscale("log")
     ax.set_xlabel("Epoch"); ax.set_ylabel("MSE")
     ax.set_title(f"Training curve — {tag}")
     ax.legend(); plt.tight_layout()
-    plt.savefig(f"{FIG_DIR}/training.png", dpi=150, bbox_inches="tight")
+    make_axis_nice(ax)
+    plt.savefig(f"{FIG_DIR}/training", bbox_inches="tight")
     plt.close()
 
     # Fig 2: PCA coloured by context
@@ -336,7 +387,8 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
     ax.set_xlabel(f"PC1 ({pca.explained_variance_ratio_[0]*100:.1f}%)")
     ax.set_ylabel(f"PC2 ({pca.explained_variance_ratio_[1]*100:.1f}%)")
     ax.legend(); plt.tight_layout()
-    plt.savefig(f"{FIG_DIR}/pca.png", dpi=150, bbox_inches="tight")
+    make_axis_nice(ax)
+    plt.savefig(f"{FIG_DIR}/pca", bbox_inches="tight")
     plt.close()
 
     # Fig 3: per-dim decode accuracy
@@ -346,9 +398,10 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
                label=f"chance ({1/len(CONTEXTS):.2f})")
     ax.set_xlabel("z dimension"); ax.set_ylabel("Decode accuracy")
     ax.set_title(f"Per-dim context decodability\n{tag}")
+    make_axis_nice(ax)
     ax.set_xticks(range(LATENT_DIM)); ax.legend()
     plt.tight_layout()
-    plt.savefig(f"{FIG_DIR}/perdim.png", dpi=150, bbox_inches="tight")
+    plt.savefig(f"{FIG_DIR}/perdim", bbox_inches="tight")
     plt.close()
 
     # Fig 4: decodability over time
@@ -371,8 +424,9 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
     ax.axvline(50,              color="tomato",  ls="--", label="avg switch (t≈50)")
     ax.set_xlabel("Timestep t"); ax.set_ylabel("Context decode accuracy")
     ax.set_title(f"Context decodability over time\n{tag}")
+    make_axis_nice(ax)
     ax.legend(); ax.set_ylim(0, 1); plt.tight_layout()
-    plt.savefig(f"{FIG_DIR}/decodetime.png", dpi=150, bbox_inches="tight")
+    plt.savefig(f"{FIG_DIR}/decodetime", bbox_inches="tight")
     plt.close()
 
     # Fig 5: confusion matrix — row-normalized + symmetrized (C + Cᵀ)/2
@@ -402,9 +456,10 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
                     color="white" if sym_conf[i, j] < 0.5 else "black",
                     fontsize=8)
     ax.set_title(f"Symmetric confusion (C + Cᵀ)/2 — row-normalized\n{tag}")
+    make_axis_nice(ax)
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     plt.tight_layout()
-    plt.savefig(f"{FIG_DIR}/confusion.png", dpi=150, bbox_inches="tight")
+    plt.savefig(f"{FIG_DIR}/confusion", bbox_inches="tight")
     plt.close()
 
     # ── Fig 5b: Univariate vs joint decoder importance ────────────────────────
@@ -413,19 +468,20 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
     axes[0].bar(range(LATENT_DIM), acc_per_dim, color="steelblue")
     axes[0].axhline(1/len(CONTEXTS), color="tomato", ls="--", label="chance")
     axes[0].set_xlabel("EC neuron"); axes[0].set_ylabel("Decode accuracy")
+    make_axis_nice(axes[0])
     axes[0].set_title("Univariate context decodability"); axes[0].legend()
     axes[1].bar(range(LATENT_DIM), decoder_importance, color="seagreen")
     axes[1].set_xlabel("EC neuron"); axes[1].set_ylabel("||coef|| across context classes")
     axes[1].set_title("Joint decoder weight norm")
     fig.suptitle(f"Univariate vs joint context encoding\n{tag}")
     plt.tight_layout()
-    plt.savefig(f"{FIG_DIR}/decoder_importance.png", dpi=150, bbox_inches="tight")
+    plt.savefig(f"{FIG_DIR}/decoder_importance", bbox_inches="tight")
     plt.close()
 
     # ── Fig 6: SVD of context decoder ─────────────────────────────────────────
     W = clf.coef_                                    # (n_contexts, LATENT_DIM)
     U, S_sv, Vt = np.linalg.svd(W, full_matrices=False)
-    n_axes = min(4, len(S_sv))
+    n_axes = min(8, len(S_sv))
 
     print(f"\nContext subspace singular values: {S_sv.round(3)}")
     print(f"Variance explained by top axis  : {S_sv[0]**2/(S_sv**2).sum()*100:.1f}%")
@@ -435,7 +491,7 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
     ax.set_xlabel("Context axis"); ax.set_ylabel("Singular value")
     ax.set_title(f"Dimensionality of context subspace\n{tag}")
     plt.tight_layout()
-    plt.savefig(f"{FIG_DIR}/svd_singular_values.png", dpi=150, bbox_inches="tight")
+    plt.savefig(f"{FIG_DIR}/svd_singular_values", bbox_inches="tight")
     plt.close()
 
     # ── Fig 6b: U heatmap — do axes align with rotation vs curl? ──────────────
@@ -453,8 +509,49 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
     ax.set_yticklabels([C_LABELS[i] for i in range(len(CONTEXTS))])
     plt.colorbar(im, ax=ax)
     ax.set_title(f"U — context loadings on SVD axes\n(clean = rotation axis separate from curl axis)\n{tag}")
+    make_axis_nice(ax)
     plt.tight_layout()
-    plt.savefig(f"{FIG_DIR}/svd_U_heatmap.png", dpi=150, bbox_inches="tight")
+    plt.savefig(f"{FIG_DIR}/svd_U_heatmap", bbox_inches="tight")
+    plt.close()
+
+    # ── Fig 6c: Dot product of context axes? ──────────────
+
+    fig, ax = plt.subplots(figsize=(3, 3))
+    rank = 6
+    W_tilde = U[:, :rank] @ np.diag(S_sv[:rank]) @ Vt[:rank]
+    W_normed = W_tilde / (np.linalg.norm(W_tilde, axis=1, keepdims=True) + 1e-8)
+    g = ax.imshow(W_normed @ W_normed.T, cmap="RdBu", vmin=-1, vmax=1)
+    fig.colorbar(g, ax=ax, pad=0.05, fraction=0.05,
+                 label='Dot product')
+
+    ax.set_yticks(range(len(CONTEXTS)))
+    ax.set_yticklabels([C_LABELS[i] for i in range(len(CONTEXTS))])
+    ax.set_xticks(range(len(CONTEXTS)))
+    ax.set_xticklabels([C_LABELS[i] for i in range(len(CONTEXTS))], rotation=90)
+    plt.tight_layout()
+    plt.savefig(f"{FIG_DIR}/low_rank_classifier_dotproduct", bbox_inches="tight")
+    plt.close()
+
+    # ── Fig 6d: Plot data on top 3 feature dimensions? ──────────────
+    fig = plt.figure(figsize=(10, 8))
+    # make 3D scatter plot
+    ax = fig.add_subplot(111, projection='3d')
+    unique_contexts = np.unique(all_ctype)
+    plot_percent = .3
+    for i, c in enumerate(unique_contexts):
+        mask = all_ctype == c
+        zs = all_z[mask]
+        points = np.random.choice(len(zs), int(len(zs) * plot_percent), replace=False)
+        projections = zs @ Vt[:3].T
+        ax.scatter(projections[points, 0], projections[points, 1], projections[points, 2],
+                    color=COLORS[i], label=C_LABELS[i], alpha=0.5)
+        
+    ax.grid(False)
+    ax.legend()
+
+    make_3d_gif(elev_range=(0, 90), azim_range=(0, 360), fps=10, 
+                ax=ax, fig=fig, save_path=f"{FIG_DIR}/z_3d_scatter.gif")
+
     plt.close()
 
     # ── Fig 7: Top context axes — which EC neurons contribute ─────────────────
@@ -466,8 +563,9 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
         ax.set_title(f"Context axis {i+1}\n({S_sv[i]**2/(S_sv**2).sum()*100:.0f}% var)")
         ax.set_xlabel("EC neuron")
     fig.suptitle(f"Which EC neurons encode each context axis\n{tag}", y=1.02)
+    make_axis_nice(fig)
     plt.tight_layout()
-    plt.savefig(f"{FIG_DIR}/svd_context_axes.png", dpi=150, bbox_inches="tight")
+    plt.savefig(f"{FIG_DIR}/svd_context_axes", bbox_inches="tight")
     plt.close()
 
     # ── Fig 8: CB weight alignment with context subspace ──────────────────────
@@ -487,9 +585,10 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
     axes[1].bar(range(1, n_axes+1), axis_alignment, color="steelblue")
     axes[1].set_xlabel("Context axis"); axes[1].set_ylabel("Total CB weight (L2)")
     axes[1].set_title("CB weight on each EC context axis")
+    make_axis_nice(fig)
     fig.suptitle(f"Does CB read EC's context subspace?\n{tag}")
     plt.tight_layout()
-    plt.savefig(f"{FIG_DIR}/cb_context_alignment.png", dpi=150, bbox_inches="tight")
+    plt.savefig(f"{FIG_DIR}/cb_context_alignment", bbox_inches="tight")
     plt.close()
 
     # ── Fig 9: Per-neuron ablation ─────────────────────────────────────────────
@@ -535,8 +634,9 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
                         for i in range(LATENT_DIM)], fontsize=7)
     ax.set_xlabel("z neuron (sorted by decode acc)"); ax.set_ylabel("ΔMSE")
     ax.set_title(f"Per-neuron ablation effect on CB MSE\n{tag}")
+    make_axis_nice(ax)
     plt.tight_layout()
-    plt.savefig(f"{FIG_DIR}/ablation_per_neuron.png", dpi=150, bbox_inches="tight")
+    plt.savefig(f"{FIG_DIR}/ablation_per_neuron", bbox_inches="tight")
     plt.close()
 
     fig, ax = plt.subplots(figsize=(7, 4))
@@ -545,7 +645,8 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
     ax.set_xlabel("Neurons ablated (highest decode acc first)"); ax.set_ylabel("CB MSE")
     ax.set_title(f"Progressive ablation\n{tag}"); ax.legend()
     plt.tight_layout()
-    plt.savefig(f"{FIG_DIR}/ablation_progressive.png", dpi=150, bbox_inches="tight")
+    make_axis_nice(ax)
+    plt.savefig(f"{FIG_DIR}/ablation_progressive", bbox_inches="tight")
     plt.close()
 
     # ── Fig 10: Context subspace ablation ─────────────────────────────────────
@@ -562,83 +663,14 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
     ax.axhline(mse_baseline, color="gray", ls="--", label=f"baseline={mse_baseline:.4f}")
     ax.set_xlabel("Context axes removed"); ax.set_ylabel("CB MSE")
     ax.set_title(f"Context subspace ablation\n{tag}"); ax.legend()
+    make_axis_nice(ax)
     plt.tight_layout()
-    plt.savefig(f"{FIG_DIR}/ctx_subspace_ablation.png", dpi=150, bbox_inches="tight")
+    plt.savefig(f"{FIG_DIR}/ctx_subspace_ablation", bbox_inches="tight")
     plt.close()
-
-    # ── NEW: Decode θ and γ as continuous variables ────────────────────────────
-    # Build per-timestep parameter labels from context id (6 contexts: no scale)
-    ctx_to_theta = {0: np.pi/4, 1: -np.pi/4, 2: 0.0,  3: 0.0,  4: 0.0,  5: 0.0}
-    ctx_to_gamma = {0: 0.0,     1: 0.0,      2: 0.4,  3: -0.4, 4: 0.0,  5: 0.0}
-    ctx_to_g     = {0: 0.0,     1: 0.0,      2: 0.0,  3: 0.0,  4: 0.4,  5: 0.4}
-    # 3-class FF type: 0=rotation, 1=curl, 2=drift
-    ctx_to_type  = {0: 0, 1: 0, 2: 1, 3: 1, 4: 2, 5: 2}
-
-    all_theta = np.array([ctx_to_theta[int(c)] for c in all_ctype])
-    all_gamma = np.array([ctx_to_gamma[int(c)] for c in all_ctype])
-    all_g     = np.array([ctx_to_g[int(c)]     for c in all_ctype])
-    all_type  = np.array([ctx_to_type[int(c)]  for c in all_ctype])
-
-    from sklearn.linear_model import Ridge
-    r2_theta = cross_val_score(Ridge(), all_z, all_theta, cv=5, scoring="r2").mean()
-    r2_gamma = cross_val_score(Ridge(), all_z, all_gamma, cv=5, scoring="r2").mean()
-    r2_g     = cross_val_score(Ridge(), all_z, all_g,     cv=5, scoring="r2").mean()
-    # β is constant (=1.0) across all 6 contexts — skip R² (undefined)
-    acc_type = cross_val_score(LogisticRegression(max_iter=500), all_z, all_type,
-                               cv=5, scoring="accuracy").mean()
-
-    print(f"\n--- Parameter encoding in z_ec ---")
-    print(f"  Decode θ (rotation angle)       R²  : {r2_theta:.3f}")
-    print(f"  Decode γ (curl strength)        R²  : {r2_gamma:.3f}")
-    print(f"  Decode g (drift strength)       R²  : {r2_g:.3f}")
-    print(f"  (β is constant across 6 contexts — skipped)")
-    print(f"  Decode FF type (rot/curl/drift): {acc_type:.3f}  (chance=0.333 — 3 types, 2 each)")
-
-    # per-neuron R² for θ, γ, g
-    r2_theta_dim = [cross_val_score(Ridge(), all_z[:, d:d+1], all_theta,
-                                    cv=5, scoring="r2").mean() for d in range(LATENT_DIM)]
-    r2_gamma_dim = [cross_val_score(Ridge(), all_z[:, d:d+1], all_gamma,
-                                    cv=5, scoring="r2").mean() for d in range(LATENT_DIM)]
-    r2_g_dim     = [cross_val_score(Ridge(), all_z[:, d:d+1], all_g,
-                                    cv=5, scoring="r2").mean() for d in range(LATENT_DIM)]
-
-    fig, axes = plt.subplots(1, 3, figsize=(18, 3))
-    for ax, r2_vals, label, color in zip(
-        axes.flat,
-        [r2_theta_dim, r2_gamma_dim, r2_g_dim],
-        ["θ (rotation angle)", "γ (curl strength)", "g (drift strength)"],
-        ["steelblue", "tomato", "seagreen"],
-    ):
-        ax.bar(range(LATENT_DIM), r2_vals, color=color)
-        ax.axhline(0, color="black", lw=0.5)
-        ax.set_xlabel("EC neuron"); ax.set_ylabel("R²")
-        ax.set_title(f"Per-neuron R² for {label}\n{tag}")
-    plt.tight_layout()
-    plt.savefig(f"{FIG_DIR}/param_encoding_all.png", dpi=150, bbox_inches="tight")
-    plt.close()
-
-    print(f"\nAll figures saved to {FIG_DIR}/")
-
-    # ── Context pair separability ──────────────────────────────────────────────
-    print("\n--- Context pair separability ---")
-    for (ca, cb_id, label) in [
-        (0, 1, "C0 vs C1 (rot+ vs rot-)"),
-        (2, 3, "C2 vs C3 (curl+ vs curl-)"),
-        (4, 5, "C4 vs C5 (drift+x vs drift-x)"),
-        (0, 2, "C0 vs C2 (rotation vs curl)"),
-        (0, 4, "C0 vs C4 (rotation vs drift)"),
-        (2, 4, "C2 vs C4 (curl vs drift)"),
-    ]:
-        mask   = np.isin(all_ctype.astype(int), [ca, cb_id])
-        z_pair = all_z[mask]
-        c_pair = all_ctype[mask].astype(int)
-        acc_pair = cross_val_score(LogisticRegression(max_iter=500), z_pair, c_pair,
-                                   cv=5, scoring="accuracy").mean()
-        print(f"  {label}: decode acc = {acc_pair:.3f}")
 
 
 # ── Training ───────────────────────────────────────────────────────────────────
-def train(seed=0, skip_eval=False):
+def train(seed=0, skip_eval=True):
     # Seed model init + any stochastic loaders. Data seeds are kept fixed below
     # so every seeded run sees the same train/val sequences — only the model
     # initialization and SGD trajectory differ across seeds.
@@ -646,6 +678,8 @@ def train(seed=0, skip_eval=False):
     np.random.seed(seed)
 
     ckpt_path = seeded_ckpt_path(seed)
+
+    exists_already = os.path.exists(ckpt_path)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}  | seed: {seed}  | ckpt: {ckpt_path}")
@@ -657,44 +691,55 @@ def train(seed=0, skip_eval=False):
     tr_trans, _      = generate_sequences(N_TRAIN, seed=0)
     va_trans, va_ctx = generate_sequences(N_VAL,   seed=99)
 
-    train_loader = DataLoader(TransitionDataset(tr_trans), batch_size=BATCH_SIZE, shuffle=True)
+    if exists_already:
+        # load previously saved checkpoint
+        checkpoint = torch.load(ckpt_path)
+        ec = EntorhinalCortex().to(device)
+        cb = CerebellumCB().to(device)
+        ec.load_state_dict(checkpoint["ec"])
+        cb.load_state_dict(checkpoint["cb"])
+        history = checkpoint["history"]
+        print("Loaded existing checkpoint")
 
-    ec        = EntorhinalCortex().to(device)
-    cb        = CerebellumCB().to(device)
-    optimizer = torch.optim.Adam(list(ec.parameters()) + list(cb.parameters()), lr=LR)
-    history   = {"train_mse": [], "val_mse": []}
+    else:
+        train_loader = DataLoader(TransitionDataset(tr_trans), batch_size=BATCH_SIZE, shuffle=True)
 
-    for epoch in range(1, EPOCHS + 1):
-        ec.train(); cb.train()
-        total_mse = 0.0
+        ec        = EntorhinalCortex().to(device)
+        cb        = CerebellumCB().to(device)
+        optimizer = torch.optim.Adam(list(ec.parameters()) + list(cb.parameters()), lr=LR)
+        history   = {"train_mse": [], "val_mse": []}
 
-        for trans in train_loader:
-            trans  = trans.to(device)
-            s_next = trans[:, :, 4:6]
-            _, s_pred = run_sequence(ec, cb, trans, device)
-            loss = F.mse_loss(s_pred, s_next)
-            optimizer.zero_grad(); loss.backward(); optimizer.step()
-            total_mse += loss.item() * len(trans)
+        for epoch in range(1, EPOCHS + 1):
+            ec.train(); cb.train()
+            total_mse = 0.0
 
-        total_mse /= N_TRAIN
-        history["train_mse"].append(total_mse)
+            for trans in train_loader:
+                trans  = trans.to(device)
+                s_next = trans[:, :, 4:6]
+                _, s_pred = run_sequence(ec, cb, trans, device)
+                loss = F.mse_loss(s_pred, s_next)
+                optimizer.zero_grad(); loss.backward(); optimizer.step()
+                total_mse += loss.item() * len(trans)
 
-        ec.eval(); cb.eval()
-        val_mse = 0.0
-        with torch.no_grad():
-            va_trans_dev = va_trans.to(device)
-            s_next       = va_trans_dev[:, :, 4:6]
-            _, s_pred    = run_sequence(ec, cb, va_trans_dev, device)
-            val_mse      = F.mse_loss(s_pred, s_next).item()
-        history["val_mse"].append(val_mse)
+            total_mse /= N_TRAIN
+            history["train_mse"].append(total_mse)
 
-        if epoch % 10 == 0:
-            print(f"Epoch {epoch:03d} | Train MSE: {total_mse:.4f} | Val MSE: {val_mse:.4f}")
+            ec.eval(); cb.eval()
+            val_mse = 0.0
+            with torch.no_grad():
+                va_trans_dev = va_trans.to(device)
+                s_next       = va_trans_dev[:, :, 4:6]
+                _, s_pred    = run_sequence(ec, cb, va_trans_dev, device)
+                val_mse      = F.mse_loss(s_pred, s_next).item()
+            history["val_mse"].append(val_mse)
 
-    os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
-    torch.save({"ec": ec.state_dict(), "cb": cb.state_dict(), "history": history,
-                "seed": seed}, ckpt_path)
-    print(f"\nSaved {ckpt_path}")
+            if epoch % 10 == 0:
+                print(f"Epoch {epoch:03d} | Train MSE: {total_mse:.4f} | Val MSE: {val_mse:.4f}")
+
+        os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
+        torch.save({"ec": ec.state_dict(), "cb": cb.state_dict(), "history": history,
+                    "seed": seed}, ckpt_path)
+        print(f"\nSaved {ckpt_path}")
 
     if skip_eval:
         print("(skipping evaluate_and_plot — --skip-eval set)")
@@ -704,7 +749,7 @@ def train(seed=0, skip_eval=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=0,
+    parser.add_argument("--seeds", type=int, default=0,
                         help="Model-init / training RNG seed. Checkpoint saved as "
                              "CKPT_PATH with `_seed{seed}` suffix.")
     parser.add_argument("--skip-eval", action="store_true",
@@ -712,5 +757,6 @@ if __name__ == "__main__":
                              "running many seeds — figs would otherwise overwrite each other).")
     args = parser.parse_args()
     t0 = time.time()
-    train(seed=args.seed, skip_eval=args.skip_eval)
+    for seed in range(args.seeds):
+        train(seed=seed, skip_eval=not seed==0)
     print(f"\nTotal training time: {time.time() - t0:.1f}s")
