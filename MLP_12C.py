@@ -348,7 +348,7 @@ def context_displacement_geometry(z, c, s, a, n_bins=25):
 
 
 def plot_pca(representation, axes, context_labels, title,
-            color_map: Optional[dict] = None, plot_frac: float = 0.3,
+            color_map: Optional[dict] = None, plot_frac: float = 0.1,
             base_dir: Optional[Path] = None):
     
     unique_contexts = np.unique(context_labels)
@@ -365,6 +365,7 @@ def plot_pca(representation, axes, context_labels, title,
     for ctx in unique_contexts:
         mask = context_labels == ctx
         reps = representation[mask]
+        # Sample a fraction of the representations to avoid overplotting
         idxs = np.random.choice(len(reps), size=int(len(reps) 
         * plot_frac), replace=False)
         reps = reps[idxs]
@@ -380,7 +381,8 @@ def plot_pca(representation, axes, context_labels, title,
     save_folder.mkdir(parents=True, exist_ok=True)
     save_path = save_folder / f"3d_scatter.gif"
 
-    make_3d_gif(ax=ax, fig=fig, save_path=save_path)
+    make_3d_gif(ax=ax, fig=fig, save_path=save_path,
+                axis_label='Feat. ')
     plt.close(fig)
 
 # ── Main analysis ─────────────────────────────────────────────────────────────
