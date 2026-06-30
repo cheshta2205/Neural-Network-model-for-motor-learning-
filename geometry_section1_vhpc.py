@@ -4,14 +4,16 @@ abstract contextual representations in ventral hippocampus") Figure-4 analog on 
 Section-1 MTL->CB model (ECtoCB_train_MSE_12C.py). MTL hidden state = EC GRU hidden
 (256-D) ~ vCA1 population.
 
-Panels laid out to mirror the consolidated paper Fig 4 (A/B/C/D):
+Panels laid out to mirror the consolidated paper Fig 4 (A/B/C/D):- check if mtl neural reps match 
+that of ventral Hippocampus during non sro task. 
+
   A (4F-H) geometry   : EC_hidden on context-decoder axes (supervised; NOT PCA)
   B (4K)   decode     : context (12-way) / family (3-way) decoding bars
-  C (4L-M) abstraction: family-across-magnitude CCGP vs # MTL units (data vs shuffle)
+  C (4L-M) abstraction: family-across-magnitude CCGP vs # MTL units (data vs shuffle)-can c be decoded even if its not trained on exactly that stimuli 
   D (4E)   context cells: eta^2 context-selectivity histogram
 
-Saved as PNG and SVG (Illustrator-editable). Also writes the rotating 3D gif and
-3-angle PNG of the context-subspace geometry (supplementary). The inference-lock-in
+Also writes the rotating 3D gif and
+3-angle PNG of the context-subspace geometry (check in PAPER folder for gifs -- supplementary). The inference-lock-in
 (decode vs trials-since-switch) is no longer in the main figure (no Fig-4 counterpart).
 
 Run: python geometry_section1_vhpc.py        (set MAKE_GIF=False to skip the slow gif)
@@ -140,7 +142,7 @@ def main():
     li = rng.choice(len(Hl), min(SUB, len(Hl)), replace=False)
     dec_ctx_late = cross_val_score(LogisticRegression(max_iter=500), Hl[li], cl[li], cv=4).mean()
 
-    # ---- C: abstraction — family-across-magnitude CCGP vs # units (data vs shuffle)
+    # ---- C: abstraction — family-across-magnitude CCGP vs # units 
     ci = rng.choice(len(Hs), min(SUB_CURVE, len(Hs)), replace=False)
     Hc, csc, fsc = Hs[ci], cs[ci], fs[ci]
     curve, curve_sh = [], []
@@ -155,7 +157,7 @@ def main():
     print(f"decode ctx={dec_ctx:.3f} (locked-in {dec_ctx_late:.3f}) fam={dec_fam:.3f} | "
           f"family-across-mag CCGP (full pop)={ccgp_full:.3f} (chance 0.33)", flush=True)
 
-    # ---- D: context-selective units (eta^2 over the 12 contexts)
+    # ---- D: context-selective units ? - neurons tuned to C? 
     grand = Hs.mean(0); ss_tot = ((Hs - grand) ** 2).sum(0); ss_bet = np.zeros(D)
     for c in range(NCTX):
         m = cs == c

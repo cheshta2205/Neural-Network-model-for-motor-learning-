@@ -1,25 +1,15 @@
 """
 structure_learning_drift.py
-───────────────────────────
+
 Section 3 (structure learning), DRIFT family — parallel to structure_learning_rot.py.
 
 Question: if EC→CB is trained on only a few drift magnitudes, does it learn the
-drift *axis* (drift strength as a continuous variable) and generalize to UNSEEN
-magnitudes?
+drift structure and generalise to unseen drifts? 
 
-Setup
------
   • Train EC→CB (MSE next-state prediction) on drift magnitudes d ∈ {0.4, 0.8, 1.2}.
-  • Drift is a constant force along +x:  F = action + d·[1, 0]   (no rotation/curl).
   • Test on a dense sweep of held-out magnitudes (interpolation inside 0.4–1.2,
     extrapolation below/above, incl. d=0 = no drift).
-  • Plot CB prediction MSE vs drift magnitude. Flat-low across the trained range
-    = learned the drift axis; spikes only at trained values = memorized 3 contexts.
-  • Bonus: fit a linear d-decoder on the 3 TRAINED magnitudes' z_ec and show it
-    predicts the correct magnitude for held-out contexts (metric axis).
-
-Drift magnitude is a non-periodic axis, so extrapolation is cleaner than rotation.
-No MC / SAC / replay buffer — pure forward model (supervised MSE).
+  • Plot CB prediction MSE vs drift magnitude.
 """
 
 import argparse
@@ -42,7 +32,7 @@ except Exception:                                    # pragma: no cover
     def make_axis_nice(*a, **k): pass
 
 
-# ── Config ──────────────────────────────────────────────────────────────────
+# ── Config
 TRAIN_DRIFTS = [0.4, 0.8, 1.2]                        # 3 anchors (magnitude along +x)
 TEST_DRIFTS  = np.round(np.arange(0.0, 1.61, 0.05), 3)  # dense sweep (incl. anchors)
 
@@ -73,7 +63,7 @@ def ckpt_path():
     return f"paper/checkpoints/structure_learning_drift_{_tag()}.pt"
 
 
-# ── Drift-only environment step ─────────────────────────────────────────────
+# ── Drift-only environment step
 def env_step(pos, vel, action, drift):
     """One velocity-based step under a constant +x drift:  F = action + d·[1,0]."""
     f = action + np.array([drift, 0.0], dtype=np.float32)
@@ -82,7 +72,7 @@ def env_step(pos, vel, action, drift):
     return pos_new.astype(np.float32), vel_new.astype(np.float32)
 
 
-# ── Data: constant-context sequences at given drift magnitudes ──────────────
+# ── Data: constant-context sequences at given drift magnitudes 
 def generate_sequences(drifts, n_seqs, seq_len=SEQ_LEN, seed=0):
     """Each sequence runs a single (constant) drift magnitude drawn from `drifts`.
     Returns transitions (N,T,6) and the drift magnitude per sequence (N,)."""
@@ -115,7 +105,7 @@ class TransitionDataset(Dataset):
     def __getitem__(self, i): return self.t[i]
 
 
-# ── Models (same architecture as the EC→CB forward model) ───────────────────
+# ── Models (same architecture as the EC→CB forward model)
 class EntorhinalCortex(nn.Module):
     def __init__(self, input_dim=EC_INPUT, hidden_dim=EC_HIDDEN, latent_dim=LATENT_DIM):
         super().__init__()
@@ -144,7 +134,7 @@ class CerebellumCB(nn.Module):
         return self.net(torch.cat([s, a, z], dim=-1))
 
 
-# ── Closed-loop rollout (EC infers context from CB prediction error) ────────
+# ── Closed-loop rollout (EC infers context from CB prediction error)
 def run_sequence(ec, cb, trans, device):
     B, T, _ = trans.shape
     zeros2 = torch.zeros(B, 2, device=device)
@@ -169,7 +159,7 @@ def run_sequence(ec, cb, trans, device):
     return torch.stack(z_seq, 1), torch.stack(s_pred_seq, 1)
 
 
-# ── Train ───────────────────────────────────────────────────────────────────
+# ── Train 
 def train(seed=0):
     torch.manual_seed(seed); np.random.seed(seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -207,7 +197,7 @@ def load(device=None):
     return ec, cb, device
 
 
-# ── Generalization sweep over held-out drift magnitudes ─────────────────────
+# ── Generalization sweep over held-out drift magnitudes
 def sweep(ec, cb, device, seed=999):
     ec.eval(); cb.eval()
     mse_mean, mse_sem, z_by_drift = [], [], []
@@ -467,7 +457,7 @@ def plot_matched_oracle(ec_mse, ec_sem, or_mse, or_sem):
     print(f"  matched oracle: {or_mse[held_in].mean():.4f}")
 
 
-# ── Plot ─────────────────────────────────────────────────────────────────────
+# ── Plots
 def plot(mse_mean, mse_sem, pred_drift):
     if _HAS_PLOT_HELPERS:
         set_plt_params(style="fast")
@@ -526,7 +516,7 @@ def plot(mse_mean, mse_sem, pred_drift):
     print(f"  trained drifts                        : {mse_mean[is_train].mean():.4f}")
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+# ── Main 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--seed", type=int, default=0)

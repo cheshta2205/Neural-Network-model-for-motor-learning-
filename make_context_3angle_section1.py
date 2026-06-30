@@ -1,7 +1,7 @@
 """
 make_context_3angle_section1.py — static 3-angle PNG of Section-1 MTL EC_hidden
-projected onto the context-decoder's top-3 SVD axes (paper-embeddable version of
-the rotating gif; gifs don't embed in PDFs). Colored by the 12 contexts.
+projected onto the context-decoder's top-3 SVD axes gifs cant go into paper so i do this 
+to give a full view of how reps in MTL look like. Colored by the 12 contexts.
 
 Run: python make_context_3angle_section1.py
 """

@@ -8,15 +8,7 @@ dichotomies, the four Bernardi measures on three model "populations":
   h_t   : EC GRU hidden state (256-D)   -> MTL / HPC analog          [PRIMARY]
   z_ec  : EC readout latent  (32-D)     -> bottleneck context code   [contrast]
   cb_h  : CB trunk activity  (256-D)    -> downstream / "PFC-like"    [contrast]
-
-Measures:
-  decoding accuracy : linear classifier, train+test on SAME conditions  -> "is info present" (SD)
-  CCGP              : train on some conditions, test on HELD-OUT ones    -> abstraction
-  shattering dim    : mean decoding accuracy across all 35 dichotomies   -> dimensionality
-  parallelism (PS)  : are the coding vectors parallel across conditions   -> abstraction (geometric)
-
-The three task-meaningful dichotomies are highlighted with Bernardi's colors:
-  context = red,  value/reward = magenta,  action/operant = gold.
+- also look at geometry_sro_panels.py
 
 Run:  python geometry_sro.py            (uses the saved checkpoint)
 """

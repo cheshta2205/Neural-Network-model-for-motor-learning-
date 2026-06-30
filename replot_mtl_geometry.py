@@ -1,7 +1,6 @@
 """
 replot_mtl_geometry.py
-──────────────────────
-Titleless remakes for the document:
+
   confusion_notitle.png            — symmetric, row-normalized confusion (z_ec, magma)
   mtl_dotproduct_mds_notitle.png   — decoder-weight cosine heatmap + MDS (MTL/EC_hidden)
 

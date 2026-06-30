@@ -11,9 +11,9 @@ Task — Bernardi et al. 2020 Cell serial-reversal SRO
     Operant and reinforcement are ORTHOGONAL: the 4 stimuli in a context span
     {R+, R−, H+, H−}.
   • Context switches every 50–70 trials; ALL 4 mappings flip at once; many
-    switches per sequence. agent needs to inferhih context im in and which stim response will get me reward
+    switches per sequence. agent needs to infer the context im in and which stim response will get me reward
 
-Model — EC→CB closed loop (architecture of NN same as ECtoCB_train_MSE_12c.py), task changes. 
+Model — MTL→CB closed loop (architecture of NN same as ECtoCB_train_MSE_12c.py), task changes and pred error changes. 
 
   EC (GRU)  : z_t = EC([x_{t-1}, x_t, δ_{t-1}])          --  signal is the RPE δ
   CB (MLP)  : (Ô_t, r̂_t) = CB(x_t, z_t)                  -- operant + reward heads
@@ -22,7 +22,7 @@ Model — EC→CB closed loop (architecture of NN same as ECtoCB_train_MSE_12c.p
 
   plot - 
 
-  1. Decode c from z_ec  (chance = 0.5).               -- can EC infer context?
+  1. Decode c from z_ec  (chance = 0.5).               -- can MTL infer context?
   2. Context decode accuracy vs trials-since-switch.   →  can z_ec decode a after a switch?
   3. Fig-1C inference: operant accuracy on the FIRST post-switch appearance of each stimulus, vs its appearance-order (1–4). Image 1 uses the stale
 context (≤ chance); images 2–4 above chance = inference from partial evidence.

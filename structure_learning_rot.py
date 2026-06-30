@@ -1,22 +1,10 @@
 """
 structure_learning_rot.py
-─────────────────────────
+
 Section 3 (structure learning), rotation family.
 
 Question: if EC→CB is trained on only a few rotation angles, does it learn 
 rotation (θ as a continuous axis) and generalize to UNSEEN angles?
-
-  • Train EC→CB (MSE next-state prediction) on rotation contexts θ ∈ {0°, 45°, 90°}.
-  • Test on a dense sweep of held-out angles (incl. interpolation 0–90° and a
-    extrapolation).
-  • Plot CB prediction MSE vs angle. If EC learned the manifold, MSE stays low
-    and smooth across held-out angles (if it spikes between trained angles -
-    EC simply memorized the 3 training contexts).
-  • fit a linear θ-decoder on the 3 TRAINED angles' z_ec and show it
-    predicts the correct angle for held-out contexts (the manifold is metric).
-
-No MC - purely the forward model
-The dynamics are rotation-only: F = R(θ)·a, velocity-based, velocity hidden.
 """
 
 import argparse
@@ -386,8 +374,7 @@ def plot_overlay(ec_mse, ec_sem, onehot_mse, scalar_mse, pred_theta):
 
 # control
 # The scalar-θ oracle earlier had a confound - ot gets a smaller input (1d) for angle, as compared to 
-# zec we gave to CB (64D) which occupies larger space. This control removes
-# this confound.
+# zec we gave to CB (64D) which occupies larger space. so we do a capacity match. T
 #  The oracle gets the SAME s,a inputs EC's GRU sees
 # (s_{t-1}, a_{t-1}, s_t) PLUS the TRUE angle θ, and outputs its own 64-D code
 # for the SAME CB. So EC and the oracle differ ONLY in

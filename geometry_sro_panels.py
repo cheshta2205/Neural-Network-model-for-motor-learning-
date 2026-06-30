@@ -6,15 +6,7 @@ of the SRO context-inference model, in BOTH epochs:
   Fig 3 (pre-stim)  : decode the PREVIOUS trial's variables from h_t
 
 Panels (matching Bernardi et al. 2020 Fig 3/5):
-  A : decoding accuracy (open) + CCGP (filled) over the 35 dichotomies
-  B : parallelism score over the 35 dichotomies
-  C : CCGP vs trials-since-switch   (context/value/action)
-  D : PS   vs trials-since-switch
-  E : shattering dimensionality (bar) vs shuffle null + named CCGP
-
-"time" axis for C/D = trials-since-switch (the model's dynamics axis; the SRO
-model has one hidden-state update per trial, so there is no within-trial ms axis).
-
+to compare if MTL reps in our model match the hippocampus neural recordings in the Bernardi paper. 
 Run:  python geometry_sro_panels.py
 """
 
@@ -74,7 +66,7 @@ def cond_labels(stim, ctx, shift_prev=False):
     return cond, valid
 
 
-# ---- measures over the 35 dichotomies (panels A/B/E)
+# measures over the 35 dichotomies (panels A/B/E)
 def analyze_pooled(X, cond, rng):
     Xs, cs = G.subsample(X, cond, m=M_COND, rng=rng)
     cond_means = {c: Xs[cs == c].mean(0) for c in range(8)}
@@ -98,7 +90,7 @@ def analyze_pooled(X, cond, rng):
             "null": np.array(null), "name_of": name_of}
 
 
-# ---- CCGP / PS vs trials-since-switch (panels C/D), for the 3 named variables
+# CCGP / PS vs trials-since-switch (panels C/D), for the 3 named variables
 def over_tss(X, cond, valid, tss, rng):
     named = G.named_dichotomies()
     out = {nm: {"k": [], "ccgp": [], "ps": []} for nm in named}

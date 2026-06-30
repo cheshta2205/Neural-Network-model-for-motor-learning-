@@ -1,35 +1,30 @@
 """
 MLP_6C.py — nonlinear context decoder for the 6-context EC→CB model.
 
-Motivation
-----------
 Earlier GLM analyses (LogisticRegression / Ridge on z_ec) showed context is
 linearly decodable, but the directions carrying that context info capture only
 a tiny fraction of z_ec variance. That pattern is consistent with mixed /
 nonlinear context coding: the variance-dominant axes don't separate contexts
 in a single linear cut.
 
-This script does two things:
+This script does two things---
   1) Trains a multi-layer MLP classifier  z_ec → context_id  and compares its
      accuracy to the linear logistic baseline. If MLP ≫ linear → there is
-     nonlinear context information that the GLM cannot read.
+     nonlinear context information that the GLM cannot decode.
   2) Tests context geometry: for each context-pair (c_a, c_b), bins (s, a)
-     and computes the per-bin centroid displacement
+     and computes the per-bin centroid displacement (MDS)
          Δ_bin = mean z_ec(c_b, s, a) - mean z_ec(c_a, s, a).
      If Δ_bin is roughly constant across bins → context = parallel translation
      in z_ec space (linear coding). If Δ_bin varies a lot with (s, a) →
      context warps state/action differently (mixed selectivity).
 
 Architecture contrast with the earlier GLM probe
-------------------------------------------------
   GLM (LogisticRegression):  z_ec ─W─► logits_6           one linear map
                               one weight matrix W ∈ ℝ^(6×32), no hidden layer
   MLP_6C:                    z_ec ─W1─► h1 ─ReLU─► W2 ─► h2 ─ReLU─► W3 ─► logits_6
                               two hidden ReLU layers (32 → 64 → 64 → 6)
 
-The linear decoder is the special case of MLP_6C with depth 0 and no
-nonlinearity. So any decode gain (MLP − linear) is exactly the nonlinear /
-mixed-selectivity component of context coding in z_ec.
+
 """
 
 import glob
@@ -73,7 +68,7 @@ COLORS = M.COLORS
 C_LABELS = M.C_LABELS
 
 
-# ── MLP decoder ───────────────────────────────────────────────────────────────
+# ── MLP decoder 
 class MLP_12C(nn.Module):
     """Nonlinear classifier: z_ec (LATENT_DIM) → context logits (12)."""
     def __init__(self, in_dim=M.LATENT_DIM, hidden=64, n_classes=N_CTX):
@@ -115,7 +110,7 @@ def train_mlp(z_tr, c_tr, z_te, c_te, device,
     return acc, mlp
 
 
-# ── Data collection ───────────────────────────────────────────────────────────
+# ── Data 
 def collect_z_state_action(ec, cb, va_trans, va_ctx, device):
     """Run val rollouts and return (z_ec, c_id, s_t, a_t) flat arrays."""
     all_z, all_c, all_s, all_a = [], [], [], []
@@ -144,7 +139,7 @@ def collect_z_state_action(ec, cb, va_trans, va_ctx, device):
     return z, c, s, a, ec, cb_1, cb_2
 
 
-# ── Variance-regularized MLP (Elom's combined idea) ───────────────────────────
+# ── Variance-regularized MLP 
 class MLP_6C_var(nn.Module):
     """
     Multilayer MLP context classifier with a reconstruction head.
@@ -219,7 +214,7 @@ def train_mlp_var(z_tr, c_tr, z_te, c_te, device, lam=1.0,
     return acc, rec_r2
 
 
-# ── Per-timestep decode curve (linear vs MLP) ─────────────────────────────────
+# ── Per-timestep decode curve
 def decode_acc_over_time_per_step(z_seq, c_seq, n_folds: int = 3):
     """
     Mirror the existing GLM 'decodetime' protocol: at every timestep t, fit
@@ -294,7 +289,7 @@ def decode_acc_over_time(z_seq, c_seq, n_folds: int = 5):
     return acc_lin.mean(axis=0), acc_mlp.mean(axis=0)
 
 
-# ── Geometry: Δ(s,a) across context pairs ─────────────────────────────────────
+# ── Geometry: Δ(s,a) across context pairs 
 def context_displacement_geometry(z, c, s, a, n_bins=25):
     """
     For every (c_a, c_b) context pair, bin (s, a) and compute the per-bin
@@ -390,7 +385,7 @@ def plot_pca(representation, axes, context_labels, title,
                 axis_label='Feat. ')
     plt.close(fig)
 
-# ── Main analysis ─────────────────────────────────────────────────────────────
+# ── Main
 def main(cross_val_folds: int = 5):
     context_labels = M.C_LABELS
     set_plt_params(style='fast', file_format='svg')
@@ -430,8 +425,7 @@ def main(cross_val_folds: int = 5):
         'cb_2': '#ffdc44'
     }
 
-    # display names for figures — internal keys stay 'ec' (ckpt/dict keys),
-    # but everything shown in a plot uses 'MTL'
+    
     DISPLAY = {'z_latent': 'z_latent', 'ec': 'MTL', 'cb_1': 'cb_1', 'cb_2': 'cb_2'}
 
     va_trans, va_ctx = M.generate_sequences(n_seqs, seed=99)
@@ -719,12 +713,6 @@ def main(cross_val_folds: int = 5):
     out = os.path.join(M.FIG_DIR, "mlp12c_vs_linear_decode.png")
     plt.savefig(out, dpi=150, bbox_inches="tight"); plt.close()
     print(f"\nWrote {out}")
-
-    # 3a-tris. Variance-regularized MLP: accuracy vs (normalized) reconstruction.
-    # x-axis is R²_bottleneck / R²_PCA-k, so PCA-k sits exactly at x=1 and any
-    # bottleneck point with x>1 would mean the nonlinear encoder is packing
-    # more variance into k dims than the optimal linear rank-k projection —
-    # flag as a possible bug.
 
 
     # 3a-bis. Per-timestep decode curve — overlay linear vs MLP

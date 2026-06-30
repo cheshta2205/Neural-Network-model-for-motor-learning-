@@ -1,29 +1,28 @@
 """
 ECtoCB_train_MSE_12c.py
 for paper FIG. 
-EC → CB trained on velocity-based dynamics with 12 contexts (rotation, curl, drift).
-Same as ECtoCB_newcontexts_train.py but without the scale contexts (C6, C7).
+MTL → CB trained on velocity-based dynamics with 12 contexts (rotation, curl, drift).
+trained with state pred error by CB -> entering MTL as input 
+
 
 Dynamics -
---------
-   5 axis do
    
     V_t     = V_{t-1} + F_total
     S_{t+1} = clamp(S_t + Δt·V_t,  0, GRID_SIZE)
 
 where:
-    β     = action scaling
+    β     = scale
     θ     = action rotation angle
     γ     = curl strength (acts on previous velocity, NOT action)
     g, b  = drift strength and direction
 
 Velocity is NOT provided as explicit input to EC or CB.
-EC infers it implicitly from consecutive states [s_{t-1}, s_t].
+EC infers it implicitly from behavior.  
 
-Architecture (unchanged from ECtoCB_MSE_shiftedversion.py)
+Architecture (derived from old ECtoCB_MSE_shiftedversion.py)
 
-    EC input : [s_{t-1}, a_{t-1}, s_t, ε_t]   — 8 dims
-    EC output: z_t                              — LATENT_DIM
+    MTL input : [s_{t-1}, a_{t-1}, s_t, ε_t]   — 8 dims
+    MTL output: z_t          (64 D)                    — LATENT_DIM
     CB input : [s_t, a_t, z_t]                 — 4 + LATENT_DIM dims
     CB output: s_{t+1} (predicted)             — 2 dims
 
@@ -67,7 +66,7 @@ except Exception:                                    # pragma: no cover
     def make_3d_gif(*a, **k): pass
 
 
-# ── Contexts ───────────────────────────────────────────────────────────────────
+# ── Contexts on which mtl-cb trained (12) ───────────────────────────────────────────────────────────────────
 CONTEXTS = [
     # (beta,  theta,      gamma,  g,    bx,   by,  c_id, label)
     (1.0,  +np.pi/2,  0.0,    0.0,  0.0,  0.0,  0,  "C0: rot++", 0),
@@ -144,7 +143,7 @@ def env_step(pos, vel, action, beta, theta, gamma, g, bx, by):
     return pos_new.astype(np.float32), vel_new.astype(np.float32)
 
 
-# ── Data generation ────────────────────────────────────────────────────────────
+# ── Data generation
 def generate_sequences(n_seqs, seq_len=SEQ_LEN, seed=0):
     """
     Each sequence has exactly 2 contexts chosen without replacement.
@@ -205,7 +204,7 @@ class TransitionDataset(Dataset):
     def __getitem__(self, idx): return self.transitions[idx]
 
 
-# ── Models (unchanged architecture) ───────────────────────────────────────────
+# ── Model
 class EntorhinalCortex(nn.Module):
     """
     EC as a step-by-step GRU.
@@ -321,7 +320,7 @@ def run_sequence(ec, cb, trans, device, return_representations=False):
     return z_seq, s_pred_seq
 
 
-# ── Evaluation + plots ─────────────────────────────────────────────────────────
+# ── Evaluation + plots
 def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
     set_plt_params(style='fast', file_format='png')
     ec.eval(); cb.eval()
