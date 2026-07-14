@@ -12,3 +12,6 @@
 
 # Ignore all .conda directories
 **/.conda/**
+
+# Keep generated figures local during branch switches
+figs/**
