@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=77.0.3", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "motor-structure-learning"
+dynamic = ["version"]
+description = "A neural network model of motor structure learning, implemented in PyTorch."
+authors = [
+    {name = "Cheshta Bhatia", email = "cheshta.bhatia@g.harvard.edu"},
+    {name = "Elom Amematsro", email = "elom.amematsro@g.harvard.edu"}
+]
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["motor learning", "neural networks", "pytorch", "computational neuroscience"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=2.0.0",
+    "matplotlib>=3.9.0",
+    "torch>=2.3.1",
+    "scipy>=1.13.0",
+    "scikit-learn>=1.5.0",
+]
+
+[project.scripts]
+motor-eval-test = "eval_test:main"
+motor-analyze-ec-similarity = "analyze_ec_similarity:main"
+motor-make-figs = "make_figs:main"
+motor-train-forward-model = "motor_structure_learning.experiments.train:train"
+motor-train-ec-only = "motor_structure_learning.experiments.train_ec_only:main"
+motor-mc-replay-hc = "motor_structure_learning.experiments.mc_replay_hc:main"
+motor-mc-savings-all = "motor_structure_learning.experiments.mc_savings_all:main"
+motor-mc-norouting-savings-hc-ppo = "motor_structure_learning.experiments.mc_norouting_savings_hc_ppo:main"
+motor-mc-norouting-savings-hc-ppo-goal = "motor_structure_learning.experiments.mc_norouting_savings_hc_ppo_goal:main"
+motor-mc-norouting-savings-hc-ec-cb = "motor_structure_learning.experiments.mc_norouting_savings_hc_ec_cb:main"
+motor-mc-savings-aba = "motor_structure_learning.experiments.mc_savings_aba:main"
+motor-learning-mc = "motor_structure_learning.experiments.learning_mc:main"
+motor-savings = "motor_structure_learning.experiments.savings:main"
+motor-mc-hc-dg-hebbian = "motor_structure_learning.experiments.mc_hc_dg_hebbian:main"
+motor-mc-savings-4cond = "motor_structure_learning.experiments.mc_savings_4cond:main"
+motor-learning-mc-novel1 = "motor_structure_learning.experiments.learning_mc_novel1:main"
+motor-mc-actor-critic = "motor_structure_learning.experiments.mc_actor_critic:main"
+motor-mc-sac = "motor_structure_learning.experiments.mc_sac:main"
+motor-mc-sac-ec-cb = "motor_structure_learning.experiments.mc_sac_ec_cb:main"
+motor-mc-forgetting = "motor_structure_learning.experiments.mc_forgetting:main"
+motor-mc-rl = "motor_structure_learning.experiments.mc_rl:main"
+motor-mc-routing-savings = "motor_structure_learning.experiments.mc_routing_savings:main"
+motor-mc-savings-thalamus = "motor_structure_learning.experiments.mc_savings_thalamus:main"
+motor-mc-learn-newcontexts = "motor_structure_learning.experiments.mc_learn_newcontexts:main"
+motor-mc-hebbian-aba = "motor_structure_learning.experiments.mc_hebbian_aba:main"
+motor-mc-hc-hebbian = "motor_structure_learning.experiments.mc_hc_hebbian:main"
+motor-learning-mc-continuous = "motor_structure_learning.experiments.learning_mc_continuous:main"
+motor-learning-mc-cbonly-novel = "motor_structure_learning.experiments.learning_mc_cbonly_novel:main"
+motor-learning-mc-cbproj = "motor_structure_learning.experiments.learning_mc_cbproj:main"
+motor-learning-new-diag-ec = "motor_structure_learning.experiments.learning_new_diag_ec:main"
+motor-savings-diag-curl-diag = "motor_structure_learning.experiments.savings_diag_curl_diag:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "build>=1.2",
+    "twine>=5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/cheshta2205/Neural-Network-model-for-motor-learning-"
+Repository = "https://github.com/cheshta2205/Neural-Network-model-for-motor-learning-"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "utils*", "motor_structure_learning*"]
+
+[tool.setuptools]
+py-modules = [
+    "analyze_ec_similarity",
+    "eval_test",
+    "make_figs",
+    "train",
+    "train_ec_only",
+    "mc_replay_hc",
+    "MC_savings_all",
+    "MC_norouting_savings_HC_PPO",
+    "MC_norouting_savings_HC_EC_CB",
+    "train_ec_hc_cb",
+    "ec_module",
+    "cb_module",
+    "hc_module",
+    "data",
+    "model",
+]
