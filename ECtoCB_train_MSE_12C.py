@@ -59,7 +59,12 @@ from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.model_selection import cross_val_score
 from sklearn.decomposition import PCA
 from sklearn.metrics import confusion_matrix
-from src.PlottingTools.plotting_functions import set_plt_params, make_axis_nice, make_3d_gif
+try:
+    from src.PlottingTools.plotting_functions import set_plt_params, make_axis_nice, make_3d_gif
+except Exception:                                    # pragma: no cover
+    def set_plt_params(*a, **k): pass
+    def make_axis_nice(*a, **k): pass
+    def make_3d_gif(*a, **k): pass
 
 
 # ── Contexts ───────────────────────────────────────────────────────────────────
@@ -99,8 +104,8 @@ EC_INPUT   = 8
 GRID_SIZE  = 4
 DT         = 1.0   # timestep
 
-CKPT_PATH  = f"./checkpoints/ectocb_{len(CONTEXTS)}ctx_seq{SEQ_LEN}_z{LATENT_DIM}/"
-FIG_DIR    = f"./figs/ectocb_{len(CONTEXTS)}ctx_seq{SEQ_LEN}_z{LATENT_DIM}.pt"
+CKPT_PATH  = f"./paper/checkpoints/ectocb_{len(CONTEXTS)}ctx_seq{SEQ_LEN}_z{LATENT_DIM}/"
+FIG_DIR    = "./paper/figs_MTLtoCB_reps"
 CKPT_NAME = f"ectocb_{len(CONTEXTS)}ctx_seq{SEQ_LEN}_z{LATENT_DIM}"
 
 
@@ -356,7 +361,7 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
             8: "#800080", 9: "#be29ec", 10: "#d896ff", 11: "#efbbff"}
 
 
-    tag     = "EC→CB | velocity dynamics | 12 contexts (no scale)"
+    tag     = "MTL→CB | velocity dynamics | 12 contexts (no scale)"
 
     # Fig 1: training curve
     fig, ax = plt.subplots(figsize=(7, 4))
@@ -467,11 +472,11 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
     fig, axes = plt.subplots(1, 2, figsize=(14, 3), sharey=False)
     axes[0].bar(range(LATENT_DIM), acc_per_dim, color="steelblue")
     axes[0].axhline(1/len(CONTEXTS), color="tomato", ls="--", label="chance")
-    axes[0].set_xlabel("EC neuron"); axes[0].set_ylabel("Decode accuracy")
+    axes[0].set_xlabel("MTL neuron"); axes[0].set_ylabel("Decode accuracy")
     make_axis_nice(axes[0])
     axes[0].set_title("Univariate context decodability"); axes[0].legend()
     axes[1].bar(range(LATENT_DIM), decoder_importance, color="seagreen")
-    axes[1].set_xlabel("EC neuron"); axes[1].set_ylabel("||coef|| across context classes")
+    axes[1].set_xlabel("MTL neuron"); axes[1].set_ylabel("||coef|| across context classes")
     axes[1].set_title("Joint decoder weight norm")
     fig.suptitle(f"Univariate vs joint context encoding\n{tag}")
     plt.tight_layout()
@@ -561,8 +566,8 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
         ax.bar(range(LATENT_DIM), Vt[i], color="steelblue")
         ax.axhline(0, color="black", lw=0.5)
         ax.set_title(f"Context axis {i+1}\n({S_sv[i]**2/(S_sv**2).sum()*100:.0f}% var)")
-        ax.set_xlabel("EC neuron")
-    fig.suptitle(f"Which EC neurons encode each context axis\n{tag}", y=1.02)
+        ax.set_xlabel("MTL neuron")
+    fig.suptitle(f"Which MTL neurons encode each context axis\n{tag}", y=1.02)
     make_axis_nice(fig)
     plt.tight_layout()
     plt.savefig(f"{FIG_DIR}/svd_context_axes", bbox_inches="tight")
@@ -579,14 +584,14 @@ def evaluate_and_plot(ec, cb, va_trans, va_ctx, history, device):
     axes[0].axvline(alignment_normed.mean(), color="tomato", ls="--",
                     label=f"mean={alignment_normed.mean():.2f}")
     axes[0].set_xlabel("Fraction of z_t weight in context subspace")
-    axes[0].set_ylabel("CB neurons"); axes[0].set_title("CB alignment with EC context subspace")
+    axes[0].set_ylabel("CB neurons"); axes[0].set_title("CB alignment with MTL context subspace")
     axes[0].legend()
     axis_alignment = np.linalg.norm(alignment, axis=0)[:n_axes]
     axes[1].bar(range(1, n_axes+1), axis_alignment, color="steelblue")
     axes[1].set_xlabel("Context axis"); axes[1].set_ylabel("Total CB weight (L2)")
-    axes[1].set_title("CB weight on each EC context axis")
+    axes[1].set_title("CB weight on each MTL context axis")
     make_axis_nice(fig)
-    fig.suptitle(f"Does CB read EC's context subspace?\n{tag}")
+    fig.suptitle(f"Does CB read MTL's context subspace?\n{tag}")
     plt.tight_layout()
     plt.savefig(f"{FIG_DIR}/cb_context_alignment", bbox_inches="tight")
     plt.close()

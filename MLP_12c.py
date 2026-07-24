@@ -50,19 +50,24 @@ from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
-from src.PlottingTools.plotting_functions import set_plt_params, make_axis_nice, make_3d_gif
+try:
+    from src.PlottingTools.plotting_functions import set_plt_params, make_axis_nice, make_3d_gif
+except Exception:                                    # pragma: no cover
+    def set_plt_params(*a, **k): pass
+    def make_axis_nice(*a, **k): pass
+    def make_3d_gif(*a, **k): pass
 
 import pdb
 
 import importlib.util
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location(
-    "train_mod", os.path.join(HERE, "ECtoCB_train_MSE_12c.py")
+    "train_mod", os.path.join(HERE, "ECtoCB_train_MSE_12C.py")  # case-exact for Linux
 )
 M = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(M)
 
-TAG = "EC→CB | velocity dynamics | 12 contexts | nonlinear decoder"
+TAG = "MTL→CB | velocity dynamics | 12 contexts | nonlinear decoder"
 N_CTX = len(M.CONTEXTS)
 COLORS = M.COLORS
 C_LABELS = M.C_LABELS
@@ -425,6 +430,10 @@ def main(cross_val_folds: int = 5):
         'cb_2': '#ffdc44'
     }
 
+    # display names for figures — internal keys stay 'ec' (ckpt/dict keys),
+    # but everything shown in a plot uses 'MTL'
+    DISPLAY = {'z_latent': 'z_latent', 'ec': 'MTL', 'cb_1': 'cb_1', 'cb_2': 'cb_2'}
+
     va_trans, va_ctx = M.generate_sequences(n_seqs, seed=99)
 
     weight_rank = len(M.C_LABELS) // 2
@@ -478,7 +487,7 @@ def main(cross_val_folds: int = 5):
             )
 
             if ckpt_idx == 0:
-                plot_pca(rep_flattened, Vt, c_i, title=label,
+                plot_pca(rep_flattened, Vt, c_i, title=DISPLAY.get(label, label),
                           color_map=COLORS, base_dir=Path(M.FIG_DIR))
             
         for fold, (tr, te) in enumerate(skf.split(z_s_i, c_i)):
@@ -531,6 +540,9 @@ def main(cross_val_folds: int = 5):
                         'rep_ctrl': np.zeros((cross_val_folds, lambdas.shape[0])), 'var_ratio': None, 'color': '#ffdc44'},
             }
 
+            cache_dir = os.path.join(M.FIG_DIR, "varsweep_cache")
+            os.makedirs(cache_dir, exist_ok=True)
+
             for key, data in var_regularized_data.items():
                 print(key)
                 representation = data['representation']
@@ -539,6 +551,20 @@ def main(cross_val_folds: int = 5):
 
                 acc_ctrl = data['acc_ctrl']
                 rep_ctrl = data['rep_ctrl']
+
+                # Resume support: if this representation's sweep already
+                # completed in a prior run, load it and skip recomputation.
+                cache_file = os.path.join(cache_dir, f"{key}.npz")
+                expected_shape = (cross_val_folds, lambdas.shape[0])
+                if os.path.exists(cache_file):
+                    cached = np.load(cache_file)
+                    if cached['r2_dec'].shape == expected_shape:
+                        data['r2_dec']   = cached['r2_dec']
+                        data['r2_rep']   = cached['r2_rep']
+                        data['acc_ctrl'] = cached['acc_ctrl']
+                        data['rep_ctrl'] = cached['rep_ctrl']
+                        print(f"  [cache] loaded {key} from {cache_file}")
+                        continue
 
                 for fold, (tr, te) in enumerate(skf.split(representation, c)):
                     for li, lam in enumerate(lambdas):
@@ -567,6 +593,10 @@ def main(cross_val_folds: int = 5):
                 data['r2_rep'] = r2_rep
                 data['acc_ctrl'] = acc_ctrl
                 data['rep_ctrl'] = rep_ctrl
+
+                np.savez(cache_file, r2_dec=r2_dec, r2_rep=r2_rep,
+                         acc_ctrl=acc_ctrl, rep_ctrl=rep_ctrl)
+                print(f"  [cache] saved {key} -> {cache_file}")
 
             fig, ax = plt.subplots(figsize=(3, 3))
 
@@ -626,7 +656,7 @@ def main(cross_val_folds: int = 5):
 
         g = ax[0].imshow(dot_product_means, cmap='RdBu', vmin=-1, vmax=1)
         fig.colorbar(g, ax=ax[0], pad=0.05, fraction=0.05, label='Dot Product')
-        fig.suptitle(f"Dot Product and MDS for {key}")
+        fig.suptitle(f"Dot Product and MDS for {DISPLAY.get(key, key)}")
 
         for i in range(N_CTX):
             ax[1].scatter(coords[i, 0], coords[i, 1],
@@ -710,12 +740,12 @@ def main(cross_val_folds: int = 5):
         color = REP_COLORS[key]
 
         ax[0].set_title("MLP-Decoding")
-        ax[0].plot(acc_mlp_t_mean, color=color, label=key)
+        ax[0].plot(acc_mlp_t_mean, color=color, label=DISPLAY.get(key, key))
         ax[0].fill_between(range(len(acc_mlp_t_mean)), acc_mlp_t_mean - acc_mlp_t_se, acc_mlp_t_mean + acc_mlp_t_se, color=color, alpha=0.2)
         ax[0].set_ylabel("Context Decode Accuracy")
 
         ax[1].set_title("Linear-Decoding")
-        ax[1].plot(acc_lin_t_mean, color=color, label=key)
+        ax[1].plot(acc_lin_t_mean, color=color, label=DISPLAY.get(key, key))
         ax[1].fill_between(range(len(acc_lin_t_mean)), acc_lin_t_mean - acc_lin_t_se, acc_lin_t_mean + acc_lin_t_se, color=color, alpha=0.2)
 
     for axis in ax:
