@@ -1,3 +1,80 @@
+# Contextual Inference — paper code
+
+Code and checkpoints to reproduce the figures of the MTL–cerebellar–motor-cortex
+contextual-inference paper. The model: a recurrent **MTL** module infers a latent
+**context** from a **cerebellar (CB)** forward model's prediction error; a
+**motor-cortex (MC)** controller uses the inferred context to act.
+
+Every script can **train from scratch** or **load the included checkpoint**
+(`--skip-train`). Checkpoints are small (~1–2 MB) and committed, so all figures
+reproduce out of the box.
+
+## Setup
+
+```bash
+pip install -r requirements.txt
+```
+
+## Figure → script map
+
+| Figure | Analysis | Script(s) | Checkpoint |
+|--------|----------|-----------|------------|
+| **1** | MTL infers latent context (decoding, confusion, decoder geometry) | `ECtoCB_train_MSE_12C.py`, `MLP_12c.py`, `replot_mtl_geometry.py` | `paper/checkpoints/ectocb_12ctx_seq80_z64/…seed0.pt` |
+| **2** | Savings (SAC controller) | **External — see note below** | — |
+| **3** | Structure learning / zero-shot generalization | `structure_learning_rot.py`, `structure_learning_drift.py` | `paper/checkpoints/structure_learning_{rot_0_45_90,rot_0_90,drift_0p4_0p8_1p2}.pt` |
+| **4** | Context inference from reward-prediction error (SRO) | `context_inference_sro_rpe.py` | `checkpoints/context_inference_sro_rpe.pt` |
+| **5** | MTL vs ventral hippocampus (motor task) | `geometry_section1_vhpc.py`, `make_context_3angle_section1.py` | (uses the 12ctx checkpoint) |
+| **6** | MTL vs HPC/PFC geometry (SRO; Bernardi 2020) | `geometry_sro.py`, `geometry_sro_panels.py` | (uses the SRO checkpoint) |
+
+Diagnostic: `within_context_decode_sro.py` — within-context vs pooled vs cross-context
+(CCGP) decode, demonstrating the value/action XOR structure in the SRO task.
+
+### Fig 2 (savings) — external
+The savings experiment (Soft Actor–Critic controller, episodes-to-criterion across
+re-exposures) lives in a separate repository:
+`eamematsro/e2e/motor_structure_learning/` (`experiments/_ablations_sweep.py`,
+`make_ablations_plot.py`). It is **not** included here; see that repo to reproduce
+Figure 2.
+
+## Reproduce the figures
+
+```bash
+# --- Fig 1: MTL infers latent context ---
+python ECtoCB_train_MSE_12C.py            # loads the 12-context checkpoint, emits confusion/pca/etc.
+python MLP_12c.py                         # GLM (linear) vs MLP (nonlinear) decode-over-time + confusion
+python replot_mtl_geometry.py             # decoder-weight cosine heatmap + MDS
+
+# --- Fig 3: structure learning ---
+python structure_learning_rot.py   --skip-train --baselines --matched-oracle   # rotation (anchors 0,45,90)
+python structure_learning_rot.py   --skip-train --train-angles 0 90            # leave-one-out (endpoints only)
+python structure_learning_drift.py --skip-train --baselines --matched-oracle   # drift
+
+# --- Fig 4: context inference from reward-prediction error ---
+python context_inference_sro_rpe.py --skip-train
+
+# --- Fig 5: MTL vs ventral hippocampus (motor) ---
+python geometry_section1_vhpc.py
+python make_context_3angle_section1.py
+
+# --- Fig 6: MTL vs HPC/PFC geometry (SRO) ---
+python geometry_sro.py
+python geometry_sro_panels.py
+python within_context_decode_sro.py       # (diagnostic: XOR / within-vs-pooled decode)
+```
+
+Or run everything: `bash make_all_figures.sh`.
+
+The Fig-3 leave-one-out **panel** overlays the `0,45,90` and `0,90` runs (the two
+`generalization_rot_*` curves); the composite panels in the paper are assembled in
+Illustrator from these script outputs.
+
+## Notes
+- Figures are written under `Paper/neural_activity_comparisons/…` and `paper/…`
+  (created automatically). The paper's final composite panels are assembled in
+  Illustrator from these outputs.
+- `MLP_12c.py` and `replot_mtl_geometry.py` dynamically import `ECtoCB_train_MSE_12C.py`;
+  keep the filenames as-is (case-sensitive on Linux).
+
 # Neural Network Model for Motor Learning
 
 PyTorch codebase for motor structure learning experiments, including forward-model training, EC/HC/CB-style modular architectures, and reinforcement-learning pipelines (A2C, SAC, PPO-style variants).

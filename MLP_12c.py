@@ -1,35 +1,30 @@
 """
 MLP_6C.py — nonlinear context decoder for the 6-context EC→CB model.
 
-Motivation
-----------
 Earlier GLM analyses (LogisticRegression / Ridge on z_ec) showed context is
 linearly decodable, but the directions carrying that context info capture only
 a tiny fraction of z_ec variance. That pattern is consistent with mixed /
 nonlinear context coding: the variance-dominant axes don't separate contexts
 in a single linear cut.
 
-This script does two things:
+This script does two things---
   1) Trains a multi-layer MLP classifier  z_ec → context_id  and compares its
      accuracy to the linear logistic baseline. If MLP ≫ linear → there is
-     nonlinear context information that the GLM cannot read.
+     nonlinear context information that the GLM cannot decode.
   2) Tests context geometry: for each context-pair (c_a, c_b), bins (s, a)
-     and computes the per-bin centroid displacement
+     and computes the per-bin centroid displacement (MDS)
          Δ_bin = mean z_ec(c_b, s, a) - mean z_ec(c_a, s, a).
      If Δ_bin is roughly constant across bins → context = parallel translation
      in z_ec space (linear coding). If Δ_bin varies a lot with (s, a) →
      context warps state/action differently (mixed selectivity).
 
 Architecture contrast with the earlier GLM probe
-------------------------------------------------
   GLM (LogisticRegression):  z_ec ─W─► logits_6           one linear map
                               one weight matrix W ∈ ℝ^(6×32), no hidden layer
   MLP_6C:                    z_ec ─W1─► h1 ─ReLU─► W2 ─► h2 ─ReLU─► W3 ─► logits_6
                               two hidden ReLU layers (32 → 64 → 64 → 6)
 
-The linear decoder is the special case of MLP_6C with depth 0 and no
-nonlinearity. So any decode gain (MLP − linear) is exactly the nonlinear /
-mixed-selectivity component of context coding in z_ec.
+
 """
 
 import glob
@@ -50,25 +45,30 @@ from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
-from src.PlottingTools.plotting_functions import set_plt_params, make_axis_nice, make_3d_gif
+try:
+    from src.PlottingTools.plotting_functions import set_plt_params, make_axis_nice, make_3d_gif
+except Exception:                                    # pragma: no cover
+    def set_plt_params(*a, **k): pass
+    def make_axis_nice(*a, **k): pass
+    def make_3d_gif(*a, **k): pass
 
 import pdb
 
 import importlib.util
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location(
-    "train_mod", os.path.join(HERE, "ECtoCB_train_MSE_12c.py")
+    "train_mod", os.path.join(HERE, "ECtoCB_train_MSE_12C.py")  # case-exact for Linux
 )
 M = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(M)
 
-TAG = "EC→CB | velocity dynamics | 12 contexts | nonlinear decoder"
+TAG = "MTL→CB | velocity dynamics | 12 contexts | nonlinear decoder"
 N_CTX = len(M.CONTEXTS)
 COLORS = M.COLORS
 C_LABELS = M.C_LABELS
 
 
-# ── MLP decoder ───────────────────────────────────────────────────────────────
+# ── MLP decoder 
 class MLP_12C(nn.Module):
     """Nonlinear classifier: z_ec (LATENT_DIM) → context logits (12)."""
     def __init__(self, in_dim=M.LATENT_DIM, hidden=64, n_classes=N_CTX):
@@ -110,7 +110,7 @@ def train_mlp(z_tr, c_tr, z_te, c_te, device,
     return acc, mlp
 
 
-# ── Data collection ───────────────────────────────────────────────────────────
+# ── Data 
 def collect_z_state_action(ec, cb, va_trans, va_ctx, device):
     """Run val rollouts and return (z_ec, c_id, s_t, a_t) flat arrays."""
     all_z, all_c, all_s, all_a = [], [], [], []
@@ -139,7 +139,7 @@ def collect_z_state_action(ec, cb, va_trans, va_ctx, device):
     return z, c, s, a, ec, cb_1, cb_2
 
 
-# ── Variance-regularized MLP (Elom's combined idea) ───────────────────────────
+# ── Variance-regularized MLP 
 class MLP_6C_var(nn.Module):
     """
     Multilayer MLP context classifier with a reconstruction head.
@@ -214,7 +214,7 @@ def train_mlp_var(z_tr, c_tr, z_te, c_te, device, lam=1.0,
     return acc, rec_r2
 
 
-# ── Per-timestep decode curve (linear vs MLP) ─────────────────────────────────
+# ── Per-timestep decode curve
 def decode_acc_over_time_per_step(z_seq, c_seq, n_folds: int = 3):
     """
     Mirror the existing GLM 'decodetime' protocol: at every timestep t, fit
@@ -289,7 +289,7 @@ def decode_acc_over_time(z_seq, c_seq, n_folds: int = 5):
     return acc_lin.mean(axis=0), acc_mlp.mean(axis=0)
 
 
-# ── Geometry: Δ(s,a) across context pairs ─────────────────────────────────────
+# ── Geometry: Δ(s,a) across context pairs 
 def context_displacement_geometry(z, c, s, a, n_bins=25):
     """
     For every (c_a, c_b) context pair, bin (s, a) and compute the per-bin
@@ -385,7 +385,7 @@ def plot_pca(representation, axes, context_labels, title,
                 axis_label='Feat. ')
     plt.close(fig)
 
-# ── Main analysis ─────────────────────────────────────────────────────────────
+# ── Main
 def main(cross_val_folds: int = 5):
     context_labels = M.C_LABELS
     set_plt_params(style='fast', file_format='svg')
@@ -424,6 +424,9 @@ def main(cross_val_folds: int = 5):
         'cb_1': '#ffa6a6',
         'cb_2': '#ffdc44'
     }
+
+    
+    DISPLAY = {'z_latent': 'z_latent', 'ec': 'MTL', 'cb_1': 'cb_1', 'cb_2': 'cb_2'}
 
     va_trans, va_ctx = M.generate_sequences(n_seqs, seed=99)
 
@@ -478,7 +481,7 @@ def main(cross_val_folds: int = 5):
             )
 
             if ckpt_idx == 0:
-                plot_pca(rep_flattened, Vt, c_i, title=label,
+                plot_pca(rep_flattened, Vt, c_i, title=DISPLAY.get(label, label),
                           color_map=COLORS, base_dir=Path(M.FIG_DIR))
             
         for fold, (tr, te) in enumerate(skf.split(z_s_i, c_i)):
@@ -531,6 +534,9 @@ def main(cross_val_folds: int = 5):
                         'rep_ctrl': np.zeros((cross_val_folds, lambdas.shape[0])), 'var_ratio': None, 'color': '#ffdc44'},
             }
 
+            cache_dir = os.path.join(M.FIG_DIR, "varsweep_cache")
+            os.makedirs(cache_dir, exist_ok=True)
+
             for key, data in var_regularized_data.items():
                 print(key)
                 representation = data['representation']
@@ -539,6 +545,20 @@ def main(cross_val_folds: int = 5):
 
                 acc_ctrl = data['acc_ctrl']
                 rep_ctrl = data['rep_ctrl']
+
+                # Resume support: if this representation's sweep already
+                # completed in a prior run, load it and skip recomputation.
+                cache_file = os.path.join(cache_dir, f"{key}.npz")
+                expected_shape = (cross_val_folds, lambdas.shape[0])
+                if os.path.exists(cache_file):
+                    cached = np.load(cache_file)
+                    if cached['r2_dec'].shape == expected_shape:
+                        data['r2_dec']   = cached['r2_dec']
+                        data['r2_rep']   = cached['r2_rep']
+                        data['acc_ctrl'] = cached['acc_ctrl']
+                        data['rep_ctrl'] = cached['rep_ctrl']
+                        print(f"  [cache] loaded {key} from {cache_file}")
+                        continue
 
                 for fold, (tr, te) in enumerate(skf.split(representation, c)):
                     for li, lam in enumerate(lambdas):
@@ -567,6 +587,10 @@ def main(cross_val_folds: int = 5):
                 data['r2_rep'] = r2_rep
                 data['acc_ctrl'] = acc_ctrl
                 data['rep_ctrl'] = rep_ctrl
+
+                np.savez(cache_file, r2_dec=r2_dec, r2_rep=r2_rep,
+                         acc_ctrl=acc_ctrl, rep_ctrl=rep_ctrl)
+                print(f"  [cache] saved {key} -> {cache_file}")
 
             fig, ax = plt.subplots(figsize=(3, 3))
 
@@ -626,7 +650,7 @@ def main(cross_val_folds: int = 5):
 
         g = ax[0].imshow(dot_product_means, cmap='RdBu', vmin=-1, vmax=1)
         fig.colorbar(g, ax=ax[0], pad=0.05, fraction=0.05, label='Dot Product')
-        fig.suptitle(f"Dot Product and MDS for {key}")
+        fig.suptitle(f"Dot Product and MDS for {DISPLAY.get(key, key)}")
 
         for i in range(N_CTX):
             ax[1].scatter(coords[i, 0], coords[i, 1],
@@ -690,12 +714,6 @@ def main(cross_val_folds: int = 5):
     plt.savefig(out, dpi=150, bbox_inches="tight"); plt.close()
     print(f"\nWrote {out}")
 
-    # 3a-tris. Variance-regularized MLP: accuracy vs (normalized) reconstruction.
-    # x-axis is R²_bottleneck / R²_PCA-k, so PCA-k sits exactly at x=1 and any
-    # bottleneck point with x>1 would mean the nonlinear encoder is packing
-    # more variance into k dims than the optimal linear rank-k projection —
-    # flag as a possible bug.
-
 
     # 3a-bis. Per-timestep decode curve — overlay linear vs MLP
     fig, ax = plt.subplots(1, 2, figsize=(4, 2), sharey=True)
@@ -710,12 +728,12 @@ def main(cross_val_folds: int = 5):
         color = REP_COLORS[key]
 
         ax[0].set_title("MLP-Decoding")
-        ax[0].plot(acc_mlp_t_mean, color=color, label=key)
+        ax[0].plot(acc_mlp_t_mean, color=color, label=DISPLAY.get(key, key))
         ax[0].fill_between(range(len(acc_mlp_t_mean)), acc_mlp_t_mean - acc_mlp_t_se, acc_mlp_t_mean + acc_mlp_t_se, color=color, alpha=0.2)
         ax[0].set_ylabel("Context Decode Accuracy")
 
         ax[1].set_title("Linear-Decoding")
-        ax[1].plot(acc_lin_t_mean, color=color, label=key)
+        ax[1].plot(acc_lin_t_mean, color=color, label=DISPLAY.get(key, key))
         ax[1].fill_between(range(len(acc_lin_t_mean)), acc_lin_t_mean - acc_lin_t_se, acc_lin_t_mean + acc_lin_t_se, color=color, alpha=0.2)
 
     for axis in ax:
