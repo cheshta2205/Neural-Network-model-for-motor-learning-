@@ -1,441 +1,84 @@
-"""Motor-learning SAC experiment with EC+CB augmented observations.
+"""Feedforward-actor, base-task ablation sweep: the original motor-learning
+SAC experiment with EC+CB augmented observations.
 
 This variant extends the base SAC loop by adding:
 - EC latent features from a recurrent transition encoder (optional via use_ec)
 - CB hidden features conditioned on state, previous action, and EC latent (optional via use_cb)
 
-Both EC and CB can be independently toggled and optionally initialized from a pretrained checkpoint.
+Both EC and CB can be independently toggled and optionally initialized from a
+pretrained checkpoint. Everything generic (EC/CB augmentation, replay buffer,
+checkpoint format, CONFIG_PRESETS) lives in `sweeps.common`, imported here as
+`sweep`; only the feedforward `Actor` + base-task episode loop are specific to
+this file.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
-from collections import deque
-import pdb
 from typing import Optional
 
 import numpy as np
 import torch
-import torch.nn as nn
 import pandas as pd
 
 from motor_structure_learning.core.ec import EntorhinalCortex
 from motor_structure_learning.core.trainers import SACTrainer, ECCBTrainer, ECCBBatch
 
-from . import _mc_sac_impl as base
+from motor_structure_learning.experiments import _mc_sac_impl as base
+from motor_structure_learning.experiments.sweeps import common as sweep
 
-def get_device():
-    if torch.cuda.is_available():
-        return "cuda"
-    # elif torch.backends.mps.is_available():
-    #     return "mps"
-    else:
-        return "cpu"
-    
-
-CTX_A = (1.0, np.pi / 3, 0.0, 0.0, 0.0, 0.0, "A: rot+60")
-CTX_B = (1.0, 0.0, +0.4, 0.0, 0.0, 0.0, "B: curl+")
-CTX_C = (1.0, -np.pi / 3, 0.0, 0.0, 0.0, 0.0, "C: rot-60")
-CTX_D = (1.0, 0.0, -0.4, 0.0, 0.0, 0.0, "D: curl-")
-
-
-PHASE_REPS = 3
-
-PHASE_DATA = [
-    {"label": "A (rot +60°)", "params": CTX_A},
-    {"label": "B (curl+)", "params": CTX_B},
-    {"label": "C (rot -60°)", "params": CTX_C},
-    {"label": "D (curl-)", "params": CTX_D}
-]
-
-N_PHASES = len(PHASE_DATA) * PHASE_REPS
-    
-base.N_PHASE_EP = 500
-base.PHASE_DATA = PHASE_DATA
-base.N_PHASES = N_PHASES
-base.PHASE_REPS = PHASE_REPS
-
-EC_HIDDEN = 256
-EC_LATENT = 32
-CB_HIDDEN = 256
-CB_PROJ_DIM = 32
-ORACLE_CTX_DIM = 32
-
-USE_PRETRAINED_EC_CB = True
-FREEZE_PRETRAINED_EC_CB = False
-EC_CB_CKPT = "checkpoints/ectocb_8ctx_seq80_z32.pt"
-
+# Original location -- left untouched (git-tracked, with pre-existing
+# uncommitted changes unrelated to this reorg) even though this file itself
+# moved into sweeps/.
 FIG_DIR = "figs/mc_ablations"
-DEVICE = get_device()
 
-PRIORITY_GAMMA_T = 5000.0
-PRIORITY_GAMMA_TD = 1.0
-PRIORITY_MIX = 0.02
-
-# Define Configurations
-
-CONFIG_PRESETS = [
-    {"name": "baseline", "desc": "Motor cortex trained with SAC no EC/CB",
-     "use_ec": False, "use_cb": False, "use_pretrained_ec_cb": False, "freeze_pretrained_ec_cb": False,
-     "priority_gamma_t": 1000.0, "priority_gamma_td": 1.0, "priority_mix": 0.02, "use_oracle": False},
-    {"name": "full_end_to_end", "desc": "Add both EC and CB features, with pretrained weights, no freezing, no recency bias",
-     "use_ec": True, "use_cb": True, "use_pretrained_ec_cb": False, "freeze_pretrained_ec_cb": False,
-     "priority_gamma_t": 1000.0, "priority_gamma_td": 1.0, "priority_mix": 0.02, "use_oracle": False},
-    {"name": "oracle", "desc": "Add one-hot context encoding of the current phase, no EC/CB",
-     "use_ec": False, "use_cb": False, "use_pretrained_ec_cb": False, "freeze_pretrained_ec_cb": False,
-     "priority_gamma_t": 1000.0, "priority_gamma_td": 1.0, "priority_mix": 0.02, "use_oracle": True},
-     {"name": "full", "desc": "Add both EC and CB features, with frozen pretrained weights",
-     "use_ec": True, "use_cb": True, "use_pretrained_ec_cb": True, "freeze_pretrained_ec_cb": True,
-     "priority_gamma_t": 1000.0, "priority_gamma_td": 1.0, "priority_mix": 0.02, "use_oracle": False},
-    {"name": "cb_only", "desc": "Add CB features, no EC, no recency bias",
-     "use_ec": False, "use_cb": True, "use_pretrained_ec_cb": True, "freeze_pretrained_ec_cb": False,
-     "priority_gamma_t": 1000.0, "priority_gamma_td": 1.0, "priority_mix": 0.02, "use_oracle": False},
-]
-
-
-def _compute_aug_obs_dim(use_ec: bool, use_cb: bool, use_oracle_ctx: bool) -> int:
-    """Compute observation dimension based on which modules are enabled."""
-    dim = base.OBS_DIM
-    if use_ec:
-        dim += EC_LATENT
-    if use_cb:
-        dim += CB_PROJ_DIM
-    if use_oracle_ctx:
-        dim += ORACLE_CTX_DIM
-    return dim
-
-
-class CerebellumCB(nn.Module):
-    """CB architecture compatible with historical EC->CB checkpoints."""
-
-    def __init__(self, latent_dim: int = EC_LATENT, hidden: int = CB_HIDDEN):
-        super().__init__()
-        self.layer1 = nn.Sequential(nn.Linear(4 + latent_dim, hidden), nn.ReLU())
-        self.layer2 = nn.Sequential(nn.Linear(hidden, hidden), nn.ReLU())
-        self.out = nn.Linear(hidden, 2)
-
-    def hidden(self, state, action, z_ec):
-        x = torch.cat([state, action, z_ec], dim=-1)
-        h1 = self.layer1(x)
-        h2 = self.layer2(h1)
-        return h2
-
-    def forward(self, state, action, z_ec):
-        return self.out(self.hidden(state, action, z_ec))
-
-
-def _freeze_module(module: nn.Module):
-    module.eval()
-    for p in module.parameters():
-        p.requires_grad = False
-
-
-def _remap_legacy_ec_state_dict(ec_state_dict):
-    """Map legacy EC GRUCell keys (cell.*) to GRU keys (gru.*_l0)."""
-    key_map = {
-        "cell.weight_ih": "gru.weight_ih_l0",
-        "cell.weight_hh": "gru.weight_hh_l0",
-        "cell.bias_ih": "gru.bias_ih_l0",
-        "cell.bias_hh": "gru.bias_hh_l0",
-    }
-    remapped = {}
-    for key, value in ec_state_dict.items():
-        remapped[key_map.get(key, key)] = value
-    return remapped
-
-
-def _remap_legacy_cb_state_dict(cb_state_dict):
-    """Map legacy CB MLP keys (net.*) to CerebellumCB keys."""
-    key_map = {
-        "net.0.weight": "layer1.0.weight",
-        "net.0.bias": "layer1.0.bias",
-        "net.2.weight": "layer2.0.weight",
-        "net.2.bias": "layer2.0.bias",
-        "net.4.weight": "out.weight",
-        "net.4.bias": "out.bias",
-    }
-    remapped = {}
-    for key, value in cb_state_dict.items():
-        remapped[key_map.get(key, key)] = value
-    return remapped
-
-
-def _load_ec_cb_if_available(ec: EntorhinalCortex, cb: CerebellumCB, ckpt_path: str, device: str) -> bool:
-    if not os.path.exists(ckpt_path):
-        print(f"EC/CB checkpoint not found at {ckpt_path}. Using random init.")
-        return False
-
-    ckpt = torch.load(ckpt_path, map_location=device)
-
-    loaded_any = False
-    if "ec" in ckpt and ec is not None:
-        ec_sd = _remap_legacy_ec_state_dict(ckpt["ec"])
-        ec.load_state_dict(ec_sd, strict=True)
-        loaded_any = True
-    else:
-        print("Checkpoint has no 'ec' key. EC left randomly initialized.")
-
-    if "cb" in ckpt and cb is not None:
-        cb_sd = _remap_legacy_cb_state_dict(ckpt["cb"])
-        cb.load_state_dict(cb_sd, strict=True)
-        loaded_any = True
-    else:
-        print("Checkpoint has no 'cb' key. CB left randomly initialized.")
-
-    if loaded_any:
-        print(f"Loaded EC/CB weights from {ckpt_path}")
-    return loaded_any
-
-def _build_aug_obs(
-    base_obs: np.ndarray,
-    z_ec: Optional[torch.Tensor],
-    z_cb: Optional[torch.Tensor],
-    use_ec: bool,
-    use_cb: bool,
-    use_oracle: bool,
-    ctx_one_hot: Optional[np.ndarray] = None
-) -> np.ndarray:
-    """Build augmented observation, conditionally including EC and CB features."""
-    components = [base_obs]
-    
-    if use_ec and z_ec is not None:
-        z_ec_np = z_ec.detach().cpu().numpy().astype(np.float32).reshape(-1)
-        components.append(z_ec_np)
-    
-    if use_cb and z_cb is not None:
-        z_cb_np = z_cb.detach().cpu().numpy().astype(np.float32).reshape(-1)
-        components.append(z_cb_np)
-    
-    if use_oracle and ctx_one_hot is not None:
-        components.append(ctx_one_hot.astype(np.float32).reshape(-1))
-
-    return np.concatenate(components, axis=0).astype(np.float32)
-
-
-def _to_tensor(x: np.ndarray, device: str) -> torch.Tensor:
-    return torch.tensor(x, dtype=torch.float32, device=device).unsqueeze(0)
-
-
-class TimeTDEPrioritizedReplayBuffer:
-    """Replay with p(e) proportional to exp(-(dt/gamma_t + |tde|/gamma_td))."""
-
-    def __init__(self, capacity: int, gamma_t: float, gamma_td: float, mix: float = 0.0, seed: int = 0, ec_hidden_dim: int = 256):
-        self.capacity = capacity
-        self.gamma_t = float(gamma_t)
-        self.gamma_td = float(gamma_td)
-        self.mix = float(mix)
-        self.rng = np.random.default_rng(seed)
-        self.ec_hidden_dim = ec_hidden_dim
-
-        self.observations = deque(maxlen=capacity)
-        self.actions = deque(maxlen=capacity)
-        self.rewards = deque(maxlen=capacity)
-        self.next_observations = deque(maxlen=capacity)
-        self.dones = deque(maxlen=capacity)
-        self.timesteps = deque(maxlen=capacity)
-        self.abs_tdes = deque(maxlen=capacity)
-        
-        # Transition data for EC replay
-        self.s_t = deque(maxlen=capacity)           # current position
-        self.a_t = deque(maxlen=capacity)           # current action
-        self.s_t_next = deque(maxlen=capacity)      # next position
-        self.pred_err_t = deque(maxlen=capacity)    # CB prediction error
-        self.h_ec_prev = deque(maxlen=capacity)     # previous EC hidden state
-
-    def __len__(self):
-        return len(self.observations)
-
-    def add(
-        self,
-        obs,
-        action,
-        reward,
-        next_obs,
-        done,
-        t_step: int,
-        init_abs_tde: float = 0.0,
-        s_t: Optional[np.ndarray] = None,
-        s_t_next: Optional[np.ndarray] = None,
-        pred_err_t: Optional[np.ndarray] = None,
-        h_ec: Optional[torch.Tensor] = None,
-    ):
-        self.observations.append(np.asarray(obs, dtype=np.float32).copy())
-        self.actions.append(np.asarray(action, dtype=np.float32).copy())
-        self.rewards.append(np.asarray([reward], dtype=np.float32))
-        self.next_observations.append(np.asarray(next_obs, dtype=np.float32).copy())
-        self.dones.append(np.asarray([done], dtype=np.float32))
-        self.timesteps.append(float(t_step))
-        self.abs_tdes.append(float(init_abs_tde))
-        
-        # Store transition data for EC replay
-        self.s_t.append(np.asarray(s_t if s_t is not None else np.zeros(2), dtype=np.float32).copy())
-        self.s_t_next.append(np.asarray(s_t_next if s_t_next is not None else np.zeros(2), dtype=np.float32).copy())
-        self.pred_err_t.append(np.asarray(pred_err_t if pred_err_t is not None else np.zeros(2), dtype=np.float32).copy())
-        
-        # Store EC hidden state for exact replay
-        if h_ec is not None:
-            self.h_ec_prev.append(h_ec.detach().cpu().numpy().astype(np.float32).copy())
-        else:
-            self.h_ec_prev.append(np.zeros((1, self.ec_hidden_dim), dtype=np.float32))
-
-    def _sampling_probs(self, t_now: int) -> np.ndarray:
-        dt = np.maximum(0.0, float(t_now) - np.asarray(self.timesteps, dtype=np.float64))
-
-        energy = dt / max(self.gamma_t, 1e-8)
-        logits = -energy
-        logits -= np.max(logits)
-        probs = np.exp(logits)
-        probs_sum = probs.sum()
-        if probs_sum <= 0.0 or not np.isfinite(probs_sum):
-            probs = np.ones_like(probs) / len(probs)
-        else:
-            probs = probs / probs_sum
-
-        if self.mix > 0.0:
-            probs = (1.0 - self.mix) * probs + self.mix * (1.0 / len(probs))
-            probs = probs / probs.sum()
-
-        return probs
-
-    def sample(self, batch_size: int, device: str, t_now: int):
-        probs = self._sampling_probs(t_now)
-        idxs = self.rng.choice(len(self.observations), size=batch_size, replace=True, p=probs)
-
-        observations = torch.tensor(np.stack([self.observations[i] for i in idxs]), device=device)
-        actions = torch.tensor(np.stack([self.actions[i] for i in idxs]), device=device)
-        rewards = torch.tensor(np.stack([self.rewards[i] for i in idxs]), device=device)
-        next_observations = torch.tensor(np.stack([self.next_observations[i] for i in idxs]), device=device)
-        dones = torch.tensor(np.stack([self.dones[i] for i in idxs]), device=device)
-
-        # Transition data for EC replay
-        s_t = torch.tensor(np.stack([self.s_t[i] for i in idxs]), device=device)
-        a_t = torch.tensor(np.stack([self.actions[i] for i in idxs]), device=device)
-        s_t_next = torch.tensor(np.stack([self.s_t_next[i] for i in idxs]), device=device)
-        pred_err_t = torch.tensor(np.stack([self.pred_err_t[i] for i in idxs]), device=device)
-        h_ec_prev = torch.tensor(np.stack([self.h_ec_prev[i] for i in idxs]), device=device)
-
-        h_ec_prev = h_ec_prev.permute(1, 0, 2).contiguous()
-
-        batch = base.SACBatch(
-            observations=observations,
-            actions=actions,
-            rewards=rewards,
-            next_observations=next_observations,
-            dones=dones,
-        )
-        return batch, idxs, (s_t, a_t, s_t_next, pred_err_t, h_ec_prev)
-
-    def update_abs_tde(self, idxs: np.ndarray, abs_tde_values: np.ndarray):
-        for idx, val in zip(idxs, abs_tde_values):
-            self.abs_tdes[int(idx)] = float(val)
-
-
-def _current_features(
-    ec: Optional[EntorhinalCortex],
-    cb: Optional[CerebellumCB],
-    cb_proj: Optional[torch.Tensor],
-    h_ec: torch.Tensor,
-    pos_np: np.ndarray,
-    prev_action_np: np.ndarray,
-    device: str,
-    use_ec: bool,
-    use_cb: bool,
-):
-    """Extract EC and CB features, returning None for disabled modules."""
-    z_ec = None
-    z_cb = None
-    
-    with torch.no_grad():
-        if use_ec and ec is not None:
-            z_ec = ec.readout(h_ec.squeeze(0))
-        else:
-            z_ec = torch.zeros(1, EC_LATENT, device=device)
-        
-        if use_cb and cb is not None and cb_proj is not None:
-            s_t = _to_tensor(pos_np, device)
-            a_prev = _to_tensor(prev_action_np, device)
-            cb_hidden = cb.hidden(s_t, a_prev, z_ec)
-            z_cb = cb_hidden @ cb_proj
-        else:
-            z_cb = torch.zeros(1, CB_PROJ_DIM, device=device)
-    
-    return z_ec, z_cb
-
-
-def _update_ec_hidden(
-    ec: Optional[EntorhinalCortex],
-    cb: Optional[CerebellumCB],
-    h_ec: torch.Tensor,
-    pos_np: np.ndarray,
-    action_np: np.ndarray,
-    next_pos_np: np.ndarray,
-    device: str,
-    use_ec: bool,
-):
-    """Update EC hidden state. Skip if use_ec=False."""
-    if not use_ec or ec is None:
-        return h_ec, torch.zeros(1, 2, device=device)
-    
-    with torch.no_grad():
-        z_ec = ec.readout(h_ec.squeeze(0))
-        s_t = _to_tensor(pos_np, device)
-        a_t = _to_tensor(action_np, device)
-        next_s_t = _to_tensor(next_pos_np, device)
-        cb_pred_t = cb(s_t, a_t, z_ec) if cb is not None else torch.zeros(1, 2, device=device)
-        pred_err_t = cb_pred_t - next_s_t
-        transition_t = torch.cat([s_t, a_t, next_s_t, pred_err_t], dim=-1).view(1, 1, -1)
-
-        _, h_new = ec(transition_t, h_ec)
-    return h_new, pred_err_t
-
-def _context_one_hot(phase_id: int) -> np.ndarray:
-    """Return one-hot encoding of the current phase_id for oracle ablation."""
-    v = np.zeros(ORACLE_CTX_DIM, dtype=np.float32)
-    v[int(phase_id)] = 1
-    return v
 
 def run_babab(
     seed: int = 0,
     use_ec: bool = True,
     use_cb: bool = True,
     use_oracle: bool = False,
-    use_pretrained_ec_cb: bool = USE_PRETRAINED_EC_CB,
-    freeze_pretrained_ec_cb: bool = FREEZE_PRETRAINED_EC_CB,
+    use_pretrained_ec_cb: bool = sweep.USE_PRETRAINED_EC_CB,
+    freeze_pretrained_ec_cb: bool = sweep.FREEZE_PRETRAINED_EC_CB,
     ec_cb_lr: float = 1e-4,
-    ec_cb_ckpt: str = EC_CB_CKPT,
-    priority_gamma_t: float = PRIORITY_GAMMA_T,
-    priority_gamma_td: float = PRIORITY_GAMMA_TD,
-    priority_mix: float = PRIORITY_MIX,
+    ec_cb_ckpt: str = sweep.EC_CB_CKPT,
+    priority_gamma_t: float = sweep.PRIORITY_GAMMA_T,
+    priority_gamma_td: float = sweep.PRIORITY_GAMMA_TD,
+    priority_mix: float = sweep.PRIORITY_MIX,
+    checkpoint_dir: Optional[str] = None,
+    config_name: Optional[str] = None,
 ):
-    device = DEVICE
+    device = sweep.DEVICE
     rng = np.random.default_rng(seed)
     torch.manual_seed(seed)
 
     # Compute dynamic obs dimension
-    aug_obs_dim = _compute_aug_obs_dim(use_ec, use_cb, use_oracle)
+    aug_obs_dim = sweep._compute_aug_obs_dim(use_ec, use_cb, use_oracle)
 
     # Initialize EC and CB (may be None if not used)
     ec = None
     cb = None
     cb_proj = None
-    
+
     if use_ec:
-        ec = EntorhinalCortex(input_dim=8, hidden_dim=EC_HIDDEN, latent_dim=EC_LATENT).to(device)
+        ec = EntorhinalCortex(input_dim=8, hidden_dim=sweep.EC_HIDDEN, latent_dim=sweep.EC_LATENT).to(device)
 
     if use_cb:
-        cb = CerebellumCB(latent_dim=EC_LATENT, hidden=CB_HIDDEN).to(device)
-        cb_proj = torch.tensor(rng.standard_normal((CB_HIDDEN, CB_PROJ_DIM)), dtype=torch.float32, device=device)
+        cb = sweep.CerebellumCB(latent_dim=sweep.EC_LATENT, hidden=sweep.CB_HIDDEN).to(device)
+        cb_proj = torch.tensor(
+            rng.standard_normal((sweep.CB_HIDDEN, sweep.CB_PROJ_DIM)), dtype=torch.float32, device=device
+        )
         cb_proj = cb_proj / (cb_proj.norm(dim=0, keepdim=True) + 1e-8)
 
     if use_pretrained_ec_cb and (ec is not None or cb is not None):
-        _load_ec_cb_if_available(ec, cb, ec_cb_ckpt, device)
+        sweep._load_ec_cb_if_available(ec, cb, ec_cb_ckpt, device)
 
     if freeze_pretrained_ec_cb:
         if ec is not None:
-            _freeze_module(ec)
+            sweep._freeze_module(ec)
         if cb is not None:
-            _freeze_module(cb)
+            sweep._freeze_module(cb)
 
     actor = base.Actor(obs_dim=aug_obs_dim, action_dim=base.ACTION_DIM).to(device)
     qf1 = base.SoftQNetwork(obs_dim=aug_obs_dim, action_dim=base.ACTION_DIM).to(device)
@@ -454,17 +97,26 @@ def run_babab(
     if cb is not None:
         ec_cb_params += [p for p in cb.parameters() if p.requires_grad]
 
-    if ec_cb_params:
-        ec_cb_optimizer = torch.optim.Adam(ec_cb_params, lr=ec_cb_lr)
+    # Build the trainer wrapper whenever EC/CB exist at all, even if every
+    # param is frozen (`ec_cb_params` empty) -- a frozen-but-present EC/CB is
+    # still actively used to generate observations throughout training, and
+    # `_save_phase_checkpoint` only ever persists EC/CB weights through this
+    # trainer's `state_dict()`. Gating construction on "has trainable params"
+    # meant frozen pretrained EC/CB (e.g. the `full` config) was silently
+    # never saved into any checkpoint at all. Only the optimizer itself
+    # (needed only when there's something to train) stays conditional --
+    # `ECCBTrainer.update()` already no-ops cleanly when `optimizer=None`.
+    if ec is not None or cb is not None:
+        ec_cb_optimizer = torch.optim.Adam(ec_cb_params, lr=ec_cb_lr) if ec_cb_params else None
         ec_cb_trainer = ECCBTrainer(
             ec=ec,
             cb=cb,
             cb_proj=cb_proj,
             optimizer=ec_cb_optimizer,
             base_obs_dim=base.OBS_DIM,
-            ec_latent_dim=EC_LATENT,
-            cb_proj_dim=CB_PROJ_DIM,
-            ec_hidden_dim=EC_HIDDEN,
+            ec_latent_dim=sweep.EC_LATENT,
+            cb_proj_dim=sweep.CB_PROJ_DIM,
+            ec_hidden_dim=sweep.EC_HIDDEN,
             use_ec=use_ec,
             use_cb=use_cb,
             device=device,
@@ -490,13 +142,13 @@ def run_babab(
         grad_clip_norm=base.GRAD_CLIP_NORM,
     )
 
-    replay_buffer = TimeTDEPrioritizedReplayBuffer(
-    capacity=base.BUFFER_CAPACITY,
-    gamma_t=priority_gamma_t,
-    gamma_td=priority_gamma_td,
-    mix=priority_mix,
-    seed=seed,
-    ec_hidden_dim=EC_HIDDEN,
+    replay_buffer = sweep.TimeTDEPrioritizedReplayBuffer(
+        capacity=base.BUFFER_CAPACITY,
+        gamma_t=priority_gamma_t,
+        gamma_td=priority_gamma_td,
+        mix=priority_mix,
+        seed=seed,
+        ec_hidden_dim=sweep.EC_HIDDEN,
     )
 
     curve = {
@@ -526,7 +178,7 @@ def run_babab(
         phase_id = phase_idx % len(base.PHASE_DATA)
         occurrence = phase_idx // len(base.PHASE_DATA)
         ctx = base.PHASE_DATA[phase_id]["params"]
-        ctx_oracle = _context_one_hot(phase_id)
+        ctx_oracle = sweep._context_one_hot(phase_id)
         name = base.PHASE_DATA[phase_id]["label"]
         print(f"\nPhase {name} ({base.N_PHASE_EP} episodes)...")
 
@@ -544,9 +196,9 @@ def run_babab(
             base_obs_np = base.build_obs(pos_np, goal_np, prev_action_np)
             init_dist = float(np.linalg.norm(pos_np - goal_np))
 
-            h_ec = torch.zeros(1, 1, EC_HIDDEN, device=device)
-            z_ec_t, z_cb_t = _current_features(ec, cb, cb_proj, h_ec, pos_np, prev_action_np, device, use_ec, use_cb)
-            obs_np = _build_aug_obs(base_obs_np, z_ec_t, z_cb_t, use_ec, use_cb, use_oracle, ctx_oracle)
+            h_ec = torch.zeros(1, 1, sweep.EC_HIDDEN, device=device)
+            z_ec_t, z_cb_t = sweep._current_features(ec, cb, cb_proj, h_ec, pos_np, prev_action_np, device, use_ec, use_cb)
+            obs_np = sweep._build_aug_obs(base_obs_np, z_ec_t, z_cb_t, use_ec, use_cb, use_oracle, ctx_oracle)
             rewards = []
             dist_seq = []
             angle_seq = []
@@ -568,7 +220,7 @@ def run_babab(
                     success = True
                     break
 
-                obs_t = _to_tensor(obs_np, device)
+                obs_t = sweep._to_tensor(obs_np, device)
                 if global_step < base.LEARNING_STARTS or len(replay_buffer) < base.BATCH_SIZE:
                     action_np = rng.uniform(-1.0, 1.0, size=base.ACTION_DIM).astype(np.float32)
                 else:
@@ -586,6 +238,8 @@ def run_babab(
                     g_dyn,
                     bx,
                     by,
+                    sdn_scale=base.SDN_COEFF,
+                    rng=rng,
                 )
                 done = bool(np.linalg.norm(s_next_np - goal_np) < base.GOAL_RADIUS)
                 reward = -0.1 * float(np.linalg.norm(s_next_np - goal_np))
@@ -602,10 +256,10 @@ def run_babab(
                     first_angle = alpha
 
                 h_ec_prev = h_ec.clone()
-                h_ec, pred_err = _update_ec_hidden(ec, cb, h_ec, pos_np, action_np, s_next_np, device, use_ec)
+                h_ec, pred_err = sweep._update_ec_hidden(ec, cb, h_ec, pos_np, action_np, s_next_np, device, use_ec)
                 next_base_obs_np = base.build_obs(s_next_np, goal_np, action_np)
-                next_z_ec_t, next_z_cb_t = _current_features(ec, cb, cb_proj, h_ec, s_next_np, action_np, device, use_ec, use_cb)
-                next_obs_np = _build_aug_obs(next_base_obs_np, next_z_ec_t, next_z_cb_t, use_ec,
+                next_z_ec_t, next_z_cb_t = sweep._current_features(ec, cb, cb_proj, h_ec, s_next_np, action_np, device, use_ec, use_cb)
+                next_obs_np = sweep._build_aug_obs(next_base_obs_np, next_z_ec_t, next_z_cb_t, use_ec,
                                               use_cb, use_oracle, ctx_oracle)
                 replay_buffer.add(
                     obs_np,
@@ -710,6 +364,20 @@ def run_babab(
                         flush=True,
                     )
 
+        if checkpoint_dir is not None:
+            ckpt_path = sweep._save_phase_checkpoint(
+                checkpoint_dir,
+                phase_idx,
+                name,
+                trainer,
+                ec_cb_trainer,
+                seed,
+                config_name,
+                global_step,
+                global_ep,
+            )
+            print(f"  Saved checkpoint: {ckpt_path}")
+
     return curve
 
 
@@ -724,13 +392,13 @@ def run_named_sweep(presets, seeds: int, base_fig_dir: str, save_agg: bool = Tru
             use_ec=cfg.get("use_ec", True),
             use_cb=cfg.get("use_cb", True),
             use_oracle=cfg.get("use_oracle", False),
-            use_pretrained_ec_cb=cfg.get("use_pretrained_ec_cb", USE_PRETRAINED_EC_CB),
-            freeze_pretrained_ec_cb=cfg.get("freeze_pretrained_ec_cb", FREEZE_PRETRAINED_EC_CB),
-            ec_cb_ckpt=cfg.get("ec_cb_ckpt", EC_CB_CKPT),
+            use_pretrained_ec_cb=cfg.get("use_pretrained_ec_cb", sweep.USE_PRETRAINED_EC_CB),
+            freeze_pretrained_ec_cb=cfg.get("freeze_pretrained_ec_cb", sweep.FREEZE_PRETRAINED_EC_CB),
+            ec_cb_ckpt=cfg.get("ec_cb_ckpt", sweep.EC_CB_CKPT),
             fig_dir=cfg_fig_dir,
-            priority_gamma_t=cfg.get("priority_gamma_t", PRIORITY_GAMMA_T),
-            priority_gamma_td=cfg.get("priority_gamma_td", PRIORITY_GAMMA_TD),
-            priority_mix=cfg.get("priority_mix", PRIORITY_MIX),
+            priority_gamma_t=cfg.get("priority_gamma_t", sweep.PRIORITY_GAMMA_T),
+            priority_gamma_td=cfg.get("priority_gamma_td", sweep.PRIORITY_GAMMA_TD),
+            priority_mix=cfg.get("priority_mix", sweep.PRIORITY_MIX),
             save_agg=save_agg,
             config_name=cfg_name,
         )
@@ -741,17 +409,17 @@ def main(
     use_ec: bool = True,
     use_cb: bool = True,
     use_oracle: bool = False,
-    use_pretrained_ec_cb: bool = USE_PRETRAINED_EC_CB,
-    freeze_pretrained_ec_cb: bool = FREEZE_PRETRAINED_EC_CB,
-    ec_cb_ckpt: str = EC_CB_CKPT,
+    use_pretrained_ec_cb: bool = sweep.USE_PRETRAINED_EC_CB,
+    freeze_pretrained_ec_cb: bool = sweep.FREEZE_PRETRAINED_EC_CB,
+    ec_cb_ckpt: str = sweep.EC_CB_CKPT,
     fig_dir: str = FIG_DIR,
-    priority_gamma_t: float = PRIORITY_GAMMA_T,
-    priority_gamma_td: float = PRIORITY_GAMMA_TD,
-    priority_mix: float = PRIORITY_MIX,
+    priority_gamma_t: float = sweep.PRIORITY_GAMMA_T,
+    priority_gamma_td: float = sweep.PRIORITY_GAMMA_TD,
+    priority_mix: float = sweep.PRIORITY_MIX,
     save_agg: bool = True,
     config_name: Optional[str] = None,
 ):
-    print(f"Device: {DEVICE}")
+    print(f"Device: {sweep.DEVICE}")
     os.makedirs(fig_dir, exist_ok=True)
 
     if config_name is None:
@@ -793,6 +461,8 @@ def main(
                 priority_gamma_t=priority_gamma_t,
                 priority_gamma_td=priority_gamma_td,
                 priority_mix=priority_mix,
+                checkpoint_dir=os.path.join(seed_dir, "checkpoints"),
+                config_name=config_name,
             )
             np.savez(curve_path, curve=np.array(curve, dtype=object))
 
@@ -883,7 +553,7 @@ def _parse_args():
     parser.add_argument(
         "--ec-cb-ckpt",
         type=str,
-        default=EC_CB_CKPT,
+        default=sweep.EC_CB_CKPT,
         help="Path to checkpoint with optional 'ec' and 'cb' state dicts.",
     )
     parser.add_argument(
@@ -895,23 +565,23 @@ def _parse_args():
     parser.add_argument(
         "--priority-gamma-t",
         type=float,
-        default=PRIORITY_GAMMA_T,
+        default=sweep.PRIORITY_GAMMA_T,
         help="Recency temperature in exp(-(dt/gamma_t + |tde|/gamma_td)).",
     )
     parser.add_argument(
         "--priority-gamma-td",
         type=float,
-        default=PRIORITY_GAMMA_TD,
+        default=sweep.PRIORITY_GAMMA_TD,
         help="TD-error temperature in exp(-(dt/gamma_t + |tde|/gamma_td)).",
     )
     parser.add_argument(
         "--priority-mix",
         type=float,
-        default=PRIORITY_MIX,
+        default=sweep.PRIORITY_MIX,
         help="Uniform-mixture fraction for replay probabilities.",
     )
 
-    parser.set_defaults(use_pretrained_ec_cb=USE_PRETRAINED_EC_CB)
+    parser.set_defaults(use_pretrained_ec_cb=sweep.USE_PRETRAINED_EC_CB)
     parser.add_argument(
         "--use-pretrained-ec-cb",
         dest="use_pretrained_ec_cb",
@@ -925,7 +595,7 @@ def _parse_args():
         help="Disable loading EC/CB from checkpoint.",
     )
 
-    parser.set_defaults(freeze_pretrained_ec_cb=FREEZE_PRETRAINED_EC_CB)
+    parser.set_defaults(freeze_pretrained_ec_cb=sweep.FREEZE_PRETRAINED_EC_CB)
     parser.add_argument(
         "--freeze-pretrained-ec-cb",
         dest="freeze_pretrained_ec_cb",
@@ -960,7 +630,7 @@ def _parse_args():
 if __name__ == "__main__":
     args = _parse_args()
     if getattr(args, "sweep", False):
-        run_named_sweep(CONFIG_PRESETS, seeds=args.seeds, base_fig_dir=args.fig_dir, save_agg=args.save_agg)
+        run_named_sweep(sweep.CONFIG_PRESETS, seeds=args.seeds, base_fig_dir=args.fig_dir, save_agg=args.save_agg)
     else:
         main(
             seeds=args.seeds,
