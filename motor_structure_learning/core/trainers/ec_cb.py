@@ -10,9 +10,10 @@ to compute h_ec with full gradient flow for training EC RNN weights.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import pdb
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 import torch.nn.functional as F
@@ -208,3 +209,16 @@ class ECCBTrainer(BaseTrainer):
         }
 
         return result
+
+    def state_dict(self) -> dict[str, Any]:
+        """Extend the base checkpoint with the (non-module) CB projection matrix."""
+        state = super().state_dict()
+        if self.cb_proj is not None:
+            state["cb_proj"] = self.cb_proj.detach().cpu()
+        return state
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        """Restore models/optimizers plus `cb_proj` from a checkpoint."""
+        super().load_state_dict(state)
+        if self.cb_proj is not None and "cb_proj" in state:
+            self.cb_proj.copy_(state["cb_proj"].to(self.cb_proj.device))

@@ -13,6 +13,7 @@ top-level flow while reusing the update mechanics.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -201,3 +202,17 @@ class SACTrainer(BaseTrainer):
             "q_target_mean": float(q_target.detach().mean().item()),
             "log_pi_mean": float(log_pi.detach().mean().item()),
         }
+
+    def state_dict(self) -> dict[str, Any]:
+        """Extend the base checkpoint with the autotuned entropy temperature."""
+        state = super().state_dict()
+        if self.log_alpha is not None:
+            state["log_alpha"] = self.log_alpha.detach().cpu()
+        return state
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        """Restore models/optimizers plus `log_alpha` from a checkpoint."""
+        super().load_state_dict(state)
+        if self.log_alpha is not None and "log_alpha" in state:
+            with torch.no_grad():
+                self.log_alpha.copy_(state["log_alpha"].to(self.log_alpha.device))

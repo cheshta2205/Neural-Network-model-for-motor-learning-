@@ -118,6 +118,22 @@ class BaseTrainer(ABC):
     def update(self, *args, **kwargs) -> Any:
         """Run one algorithm-specific training update."""
 
+    def state_dict(self) -> dict[str, Any]:
+        """Return a checkpoint dict covering all registered models and optimizers."""
+        return {
+            "models": {name: model.state_dict() for name, model in self.models.items()},
+            "optimizers": {name: opt.state_dict() for name, opt in self.optimizers.items()},
+        }
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        """Load a checkpoint dict produced by `state_dict()` into registered models/optimizers."""
+        for name, sd in state.get("models", {}).items():
+            if name in self.models:
+                self.models[name].load_state_dict(sd)
+        for name, sd in state.get("optimizers", {}).items():
+            if name in self.optimizers:
+                self.optimizers[name].load_state_dict(sd)
+
     def _iter_optimizers(self, optimizer_names: Optional[Iterable[str]] = None):
         if optimizer_names is None:
             yield from self.optimizers.values()
