@@ -1,5 +1,6 @@
 import argparse
-from motor_structure_learning.experiments._ablations_sweep import run_named_sweep, CONFIG_PRESETS
+from motor_structure_learning.experiments.sweeps.feedforward_base import run_named_sweep
+from motor_structure_learning.experiments.sweeps.common import CONFIG_PRESETS
 
 if __name__ == "__main__":
     # Run the full named sweep with default settings (5 seeds, outputs to figs/mc_ablations)
