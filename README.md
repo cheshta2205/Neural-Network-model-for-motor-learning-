@@ -7,7 +7,8 @@ contextual-inference paper. The model: a recurrent **MTL** module infers a laten
 
 Every script can **train from scratch** or **load the included checkpoint**
 (`--skip-train`). Checkpoints are small (~1–2 MB) and committed, so all figures
-reproduce out of the box.
+reproduce out of the box — except Fig 2 (savings), which has no committed
+checkpoint and always trains its SAC controller from scratch (see below).
 
 ## Setup
 
@@ -20,7 +21,7 @@ pip install -r requirements.txt
 | Figure | Analysis | Script(s) | Checkpoint |
 |--------|----------|-----------|------------|
 | **1** | MTL infers latent context (decoding, confusion, decoder geometry) | `ECtoCB_train_MSE_12C.py`, `MLP_12c.py`, `replot_mtl_geometry.py` | `paper/checkpoints/ectocb_12ctx_seq80_z64/…seed0.pt` |
-| **2** | Savings (SAC controller) | **External — see note below** | — |
+| **2** | Savings (SAC controller) | `sweep_ablations.py` (training), `make_ablations_plot.py` (plotting) | — (no shortcut; SAC controller trains from scratch) |
 | **3** | Structure learning / zero-shot generalization | `structure_learning_rot.py`, `structure_learning_drift.py` | `paper/checkpoints/structure_learning_{rot_0_45_90,rot_0_90,drift_0p4_0p8_1p2}.pt` |
 | **4** | Context inference from reward-prediction error (SRO) | `context_inference_sro_rpe.py` | `checkpoints/context_inference_sro_rpe.pt` |
 | **5** | MTL vs ventral hippocampus (motor task) | `geometry_section1_vhpc.py`, `make_context_3angle_section1.py` | (uses the 12ctx checkpoint) |
@@ -29,12 +30,13 @@ pip install -r requirements.txt
 Diagnostic: `within_context_decode_sro.py` — within-context vs pooled vs cross-context
 (CCGP) decode, demonstrating the value/action XOR structure in the SRO task.
 
-### Fig 2 (savings) — external
-The savings experiment (Soft Actor–Critic controller, episodes-to-criterion across
-re-exposures) lives in a separate repository:
-`eamematsro/e2e/motor_structure_learning/` (`experiments/_ablations_sweep.py`,
-`make_ablations_plot.py`). It is **not** included here; see that repo to reproduce
-Figure 2.
+### Fig 2 (savings) — no train-from-checkpoint shortcut
+
+Unlike the other figures, Fig 2 (episodes-to-criterion across re-exposures, SAC
+controller) has no committed checkpoint to skip training: `sweep_ablations.py`
+trains 5 ablation configs x 5 seeds from scratch (`figs/mc_ablations/<config>/seed_*`),
+then `make_ablations_plot.py` aggregates and plots the results. This is a long-running
+step and is **not** included in `make_all_figures.sh` (see below).
 
 ## Reproduce the figures
 
@@ -43,6 +45,10 @@ Figure 2.
 python ECtoCB_train_MSE_12C.py            # loads the 12-context checkpoint, emits confusion/pca/etc.
 python MLP_12c.py                         # GLM (linear) vs MLP (nonlinear) decode-over-time + confusion
 python replot_mtl_geometry.py             # decoder-weight cosine heatmap + MDS
+
+# --- Fig 2: Savings and Forward transfer plot
+python sweep_ablations.py # trains different circuits on a sequential learning schedule
+python make_ablations_plot.py # plot figures
 
 # --- Fig 3: structure learning ---
 python structure_learning_rot.py   --skip-train --baselines --matched-oracle   # rotation (anchors 0,45,90)
@@ -62,7 +68,9 @@ python geometry_sro_panels.py
 python within_context_decode_sro.py       # (diagnostic: XOR / within-vs-pooled decode)
 ```
 
-Or run everything: `bash make_all_figures.sh`.
+Or run everything except Fig 2 training: `bash make_all_figures.sh` (it re-plots Fig 2
+from existing `figs/mc_ablations/` output, but does not run `sweep_ablations.py` — run
+that separately first if you don't already have sweep results).
 
 The Fig-3 leave-one-out **panel** overlays the `0,45,90` and `0,90` runs (the two
 `generalization_rot_*` curves); the composite panels in the paper are assembled in
