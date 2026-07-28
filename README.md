@@ -147,7 +147,11 @@ Examples:
 motor-mc-sac
 motor-train-forward-model
 motor-mc-savings-all
+motor-olm-task
 ```
+
+See [`OLM_TASK.md`](OLM_TASK.md) for the Object Location Memory task (object
+egocentric features, static-object training, held-out displacement probe).
 
 You can also run modules directly with Python:
 
