@@ -59,8 +59,10 @@ LR = 1e-3
 LATENT_DIM = 32
 CB_HIDDEN = 256
 
-N_OBJECTS = 2
+N_OBJECTS = 2       # objects shown simultaneously in any one episode
 IDENTITY_DIM = 8
+N_LIBRARY = 10      # size of the shared object library (C(N_LIBRARY, 2) possible pairs)
+LIBRARY_SEED = 12345  # fixed, independent of the training/eval seed -- library identity is stable
 
 ACTION_DIM = 2
 OBJ_FEATURE_DIM = IDENTITY_DIM + 3          # identity + distance + sin + cos
@@ -91,6 +93,15 @@ def _build_state(agent_pos, heading, obj_positions, identities, diag):
     return np.concatenate([agent_pos.astype(np.float32)] + obj_feats)
 
 
+def build_object_library(n_library=N_LIBRARY, identity_dim=IDENTITY_DIM, library_seed=LIBRARY_SEED):
+    """Fixed pool of N_LIBRARY object identity vectors, sampled once from a dedicated seed
+    independent of the training/eval seed -- so a given library index means the same
+    identity vector across every seed/run. Each episode samples 2 of these (without
+    replacement); their *locations* are still randomized fresh every episode."""
+    rng = np.random.default_rng(library_seed)
+    return rng.standard_normal((n_library, identity_dim)).astype(np.float32)
+
+
 def _sample_actions(rng, n, max_step=MAX_STEP):
     """n continuous random actions: random direction (angle) and random magnitude in [0, max_step].
 
@@ -105,15 +116,19 @@ def _sample_actions(rng, n, max_step=MAX_STEP):
 
 
 def generate_olm_sequences(n_seqs, seq_len=SEQ_LEN, pos_bound=POS_BOUND, max_step=MAX_STEP,
-                            n_objects=N_OBJECTS, identity_dim=IDENTITY_DIM, seed=0):
-    """Random-action trajectories with two static objects (fresh identity/location per sequence)."""
+                            n_objects=N_OBJECTS, identity_dim=IDENTITY_DIM, n_library=N_LIBRARY,
+                            library=None, seed=0):
+    """Random-action trajectories with two static objects per episode, drawn (without
+    replacement) from a shared N_LIBRARY-object pool -- fresh location every episode,
+    but identity is one of a fixed, recognizable set (see build_object_library)."""
     rng = np.random.default_rng(seed)
     diag = float(2 * pos_bound * np.sqrt(2))
+    library = library if library is not None else build_object_library(n_library, identity_dim)
 
     all_trans = []
     for _ in range(n_seqs):
         agent_pos = rng.uniform(-pos_bound, pos_bound, size=2).astype(np.float32)
-        identities = rng.standard_normal((n_objects, identity_dim)).astype(np.float32)
+        identities = library[rng.choice(len(library), size=n_objects, replace=False)]
         obj_positions = rng.uniform(-pos_bound, pos_bound, size=(n_objects, 2)).astype(np.float32)
         heading = np.array([1.0, 0.0], dtype=np.float32)
 
@@ -138,9 +153,12 @@ def generate_olm_sequences(n_seqs, seq_len=SEQ_LEN, pos_bound=POS_BOUND, max_ste
 
 
 def generate_displacement_probe_data(n_pairs, seq_len=SEQ_LEN, t_probe=None, pos_bound=POS_BOUND,
-                                      max_step=MAX_STEP, n_objects=N_OBJECTS, identity_dim=IDENTITY_DIM, seed=0):
+                                      max_step=MAX_STEP, n_objects=N_OBJECTS, identity_dim=IDENTITY_DIM,
+                                      n_library=N_LIBRARY, library=None, seed=0):
     """Paired control/displaced episodes sharing the same trajectory + objects, up to t_probe.
 
+    Objects are drawn (without replacement) from the same shared N_LIBRARY-object pool as
+    generate_olm_sequences (see build_object_library), with a fresh location per episode.
     In the displaced variant, one randomly chosen object is relocated to a new random
     position at t_probe; both variants are otherwise identical (same agent trajectory,
     same initial object identities/locations).
@@ -149,12 +167,13 @@ def generate_displacement_probe_data(n_pairs, seq_len=SEQ_LEN, t_probe=None, pos
         t_probe = seq_len // 2
     rng = np.random.default_rng(seed)
     diag = float(2 * pos_bound * np.sqrt(2))
+    library = library if library is not None else build_object_library(n_library, identity_dim)
 
     control_trans, displaced_trans, moved_idxs = [], [], []
 
     for _ in range(n_pairs):
         start_pos = rng.uniform(-pos_bound, pos_bound, size=2).astype(np.float32)
-        identities = rng.standard_normal((n_objects, identity_dim)).astype(np.float32)
+        identities = library[rng.choice(len(library), size=n_objects, replace=False)]
         obj_positions0 = rng.uniform(-pos_bound, pos_bound, size=(n_objects, 2)).astype(np.float32)
         actions, headings = _sample_actions(rng, seq_len, max_step)  # shared trajectory
 
