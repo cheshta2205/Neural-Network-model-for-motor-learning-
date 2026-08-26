@@ -106,7 +106,8 @@ def set_plt_params(font_size: int = 6, legend_size: int = 6, axes_label_size: in
                    axes_title_size: int = 6, xtick_label_size: int = 5, ytick_label_size: int = 5,
                    ticksize: float = 2, path_simplify: bool = False,
                    fig_title_size: int = 7, style: str = 'ggplot', font: str = 'avenir',
-                   file_format: str = 'svg', fig_dpi: int = 500, figsize: Tuple[float, float] = (11, 8),
+                   file_format: str = 'svg', fig_backend: str = 'svg',
+                   fig_dpi: int = 500, figsize: Tuple[float, float] = (11, 8),
                    auto_method: str = None, x_margin: float = None, y_margin: float = None,
                    render_path: bool = False, marker_size: float = 2):
     """
@@ -134,7 +135,7 @@ def set_plt_params(font_size: int = 6, legend_size: int = 6, axes_label_size: in
     plt.rcParams.update(plt.rcParamsDefault)
     plt.style.use(style)
     plt.rcParams['savefig.format'] = file_format
-    plt.rcParams['backend'] = file_format
+    plt.rcParams['backend'] = fig_backend
     plt.rcParams['savefig.dpi'] = fig_dpi
     plt.rcParams['figure.figsize'] = figsize
     plt.rcParams['path.simplify'] = path_simplify

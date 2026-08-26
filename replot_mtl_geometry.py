@@ -18,6 +18,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import confusion_matrix
 from sklearn.manifold import MDS
+from src.PlottingTools.plotting_functions import set_plt_params, make_axis_nice
+
+set_plt_params(style='fast', file_format='png')
 
 torch.set_num_threads(4)
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -60,7 +63,8 @@ for i in range(NCTX):
                 color="white" if sym[i, j] < 0.5 else "black", fontsize=8)
 plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 plt.tight_layout()
-out1 = os.path.join(FIG_DIR, "confusion_notitle.png")
+make_axis_nice()
+out1 = os.path.join(FIG_DIR, "confusion_notitle")
 plt.savefig(out1, bbox_inches="tight", dpi=200); plt.close()
 print(f"wrote {out1}", flush=True)
 
@@ -90,8 +94,9 @@ for i in range(NCTX):
                    textcoords="offset points", xytext=(8, 6), fontsize=6, color=COLORS[i])
 ax[1].set_xlabel("MDS dim 1"); ax[1].set_ylabel("MDS dim 2")
 ax[1].set_aspect("equal", adjustable="datalim"); ax[1].grid(alpha=0.3)
+make_axis_nice()
 fig.tight_layout()
-out2 = os.path.join(FIG_DIR, "mtl_dotproduct_mds_notitle.png")
+out2 = os.path.join(FIG_DIR, "mtl_dotproduct_mds_notitle")
 fig.savefig(out2, bbox_inches="tight", dpi=200); plt.close()
 print(f"wrote {out2}", flush=True)
 print("done", flush=True)

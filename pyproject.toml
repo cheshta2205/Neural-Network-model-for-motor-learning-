@@ -59,6 +59,8 @@ motor-learning-mc-cbonly-novel = "motor_structure_learning.experiments.learning_
 motor-learning-mc-cbproj = "motor_structure_learning.experiments.learning_mc_cbproj:main"
 motor-learning-new-diag-ec = "motor_structure_learning.experiments.learning_new_diag_ec:main"
 motor-savings-diag-curl-diag = "motor_structure_learning.experiments.savings_diag_curl_diag:main"
+motor-olm-task = "motor_structure_learning.experiments.olm_task:main"
+motor-olm-aggregate-eval = "motor_structure_learning.experiments.olm_aggregate_eval:main"
 
 [project.optional-dependencies]
 dev = [
@@ -92,4 +94,6 @@ py-modules = [
     "hc_module",
     "data",
     "model",
+    "olm_task",
+    "olm_aggregate_eval",
 ]
