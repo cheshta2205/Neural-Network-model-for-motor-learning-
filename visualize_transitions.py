@@ -21,6 +21,7 @@ def generate_state_sequences(action: np.ndarray, dynamics_params: Optional[dict]
             "bx": 0.0,
             "by": 0.0
         }
+
     n_actions = action.shape[1]
     positions = np.zeros((n_steps, 2, n_actions), dtype=np.float32)
     velocities = np.zeros((n_steps, 2, n_actions), dtype=np.float32)
@@ -60,7 +61,7 @@ def generate_state_sequences(action: np.ndarray, dynamics_params: Optional[dict]
     return positions
 
 if __name__ == "__main__":
-    set_plt_params(style='fast')
+    set_plt_params(style='fast', )
     fig_folder = Path().cwd() / "figs" / "rlc"
     fig_folder.mkdir(parents=True, exist_ok=True)
 
